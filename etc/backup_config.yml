@@ -1,0 +1,32 @@
+global:
+  backup_root: /var/backups/mysql
+  log_dir: /var/log/mysql-msp-backup
+  tmp_dir: /tmp/mysql-msp-backup
+  default_encryption: none
+  default_retention_days: 7
+
+instances:
+  - name: example-instance
+    host: 127.0.0.1
+    port: 3306
+    user: backup
+    password_env: MYSQL_BACKUP_PASSWORD
+    pxc: false
+
+jobs:
+  - name: logical-daily
+    instance: example-instance
+    type: logical
+    schedule_hint: daily
+    backup_options:
+      mydumper_path: /usr/bin/mydumper
+      threads: 4
+      chunk_filesize: 64
+      rows: 50000
+      compress: true
+    encryption: null
+    dedup: false
+    offsite_targets: []
+
+storage: []
+

@@ -1,0 +1,113 @@
+global:
+  backup_root: /var/backups/mysql
+  log_dir: /var/log/mysql-msp-backup
+  tmp_dir: /tmp/mysql-msp-backup
+  default_encryption: none          # none | xtrabackup_aes256 | gpg
+  default_retention_days: 7
+
+instances:
+  - name: prod-mysql1
+    host: 10.0.0.10
+    port: 3306
+    user: backup
+    password_env: MYSQL_BACKUP_PASSWORD
+    pxc: false
+
+  - name: prod-pxc1
+    host: 10.0.1.10
+    port: 3306
+    user: backup
+    password_env: PXC_BACKUP_PASSWORD
+    pxc: true
+    pxc_desync: true
+    pxc_cluster_name: prod-pxc
+
+jobs:
+  # Logical daily backup from standalone MySQL
+  - name: logical-daily
+    instance: prod-mysql1
+    type: logical
+    schedule_hint: "0 2 * * *"
+    backup_options:
+      mydumper_path: /usr/bin/mydumper
+      threads: 8
+      chunk_filesize: 64
+      rows: 50000
+      compress: true
+      # extra_args: ["--long-query-guard=60"]
+    encryption: null            # override if you want gpg here
+    dedup: false
+    offsite_targets: ["s3-main", "rsync-dr"]
+
+  # Physical daily backup from standalone MySQL
+  - name: physical-daily
+    instance: prod-mysql1
+    type: physical
+    schedule_hint: "0 1 * * *"
+    backup_options:
+      tool: xtrabackup
+      xtrabackup_path: /usr/bin/xtrabackup
+      backup_mode: full          # full | incremental
+      prepare_after_backup: true
+      use_xtra_encryption: true
+      xtra_key_env: XTRABACKUP_ENCRYPTION_KEY
+      xtra_encrypt_algo: AES256
+      # gpg_recipient: "backup@example.com"
+      # extra_args: ["--parallel=4"]
+    encryption: xtrabackup_aes256
+    dedup: true
+    offsite_targets: ["s3-main", "rsync-dr"]
+
+  # Physical daily backup from PXC node (desync handled in code later)
+  - name: pxc-physical-daily
+    instance: prod-pxc1
+    type: physical
+    schedule_hint: "30 1 * * *"
+    backup_options:
+      tool: xtrabackup
+      xtrabackup_path: /usr/bin/xtrabackup
+      backup_mode: full
+      prepare_after_backup: true
+      use_xtra_encryption: true
+      xtra_key_env: PXC_XTRABACKUP_ENCRYPTION_KEY
+      xtra_encrypt_algo: AES256
+    encryption: xtrabackup_aes256
+    dedup: true
+    offsite_targets: ["s3-main"]
+
+  # Binlog backup every 5 minutes from standalone MySQL
+  - name: binlog-5min
+    instance: prod-mysql1
+    type: binlog
+    schedule_hint: "*/5 * * * *"
+    backup_options:
+      mysqlbinlog_path: /usr/bin/mysqlbinlog
+      binlog_file: mysql-bin.000001    # only needed for the very first run
+      # gpg_recipient: "backup@example.com"
+    encryption: null
+    dedup: false
+    offsite_targets: ["s3-main"]
+
+storage:
+  - name: s3-main
+    type: s3
+    options:
+      bucket: my-mysql-backups
+      prefix: prod/
+      # storage_class: STANDARD_IA
+      # kms_key_id: "arn:aws:kms:region:acct:key/uuid"
+
+  - name: rsync-dr
+    type: rsync
+    options:
+      target: backup@dr-host:/data/mysql-backups
+      # ssh_user: backup
+      # ssh_key: /home/backup/.ssh/id_rsa
+      # options: "-z"
+
+  - name: gcs-dr
+    type: gcs
+    options:
+      bucket: my-gcs-backups
+      prefix: prod/
+

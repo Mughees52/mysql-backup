@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mysql-backup"
+version = "0.1.0"
+description = "MySQL/MariaDB backup suite with logical, physical, and binlog backups plus encryption and offsite copies."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "Mughees", email = "you@example.com" }
+]
+dependencies = [
+  "PyYAML>=6.0",
+  "python-dateutil>=2.8",
+  "pymysql>=1.0",
+  "cryptography>=42.0.0",
+]
+
+[project.scripts]
+mysql_backup_driver = "mysql_msp_backup.driver:main"
+mysql_backup_precheck = "mysql_msp_backup.precheck:main"
+
