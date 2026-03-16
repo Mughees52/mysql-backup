@@ -20,6 +20,9 @@ dependencies = [
 ]
 
 [project.scripts]
-mysql_backup_driver = "mysql_msp_backup.driver:main"
-mysql_backup_precheck = "mysql_msp_backup.precheck:main"
+mysql_backup_driver = "mysql_backup.driver:main"
+mysql_backup_precheck = "mysql_backup.precheck:main"
+
+[tool.setuptools]
+packages = ["mysql_backup"]
 

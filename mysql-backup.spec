@@ -45,7 +45,7 @@ mysql-backup is a Python 3 backup suite for MySQL/MariaDB providing:
 %doc README.md
 /usr/bin/mysql_backup_driver
 /usr/bin/mysql_backup_precheck
-%{python3_sitelib}/mysql_msp_backup*
+%{python3_sitelib}/mysql_backup*
 
 %changelog
 * Mon Mar 16 2026 Mughees <you@example.com> - 0.1.0-1

@@ -1,7 +1,7 @@
 global:
   backup_root: /var/backups/mysql
-  log_dir: /var/log/mysql-msp-backup
-  tmp_dir: /tmp/mysql-msp-backup
+  log_dir: /var/log/mysql-backup
+  tmp_dir: /tmp/mysql-backup
   default_encryption: none          # none | xtrabackup_aes256 | gpg
   default_retention_days: 7
 
