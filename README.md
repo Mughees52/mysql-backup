@@ -11,32 +11,39 @@ Python 3 backup suite for MySQL/MariaDB providing:
 
 Ensure Python 3.9+ and required system tools are installed: `mydumper`, `xtrabackup`/`mariadb-backup`, `mysqlbinlog`, `gpg`, `aws` (if using S3), `gsutil` (if using GCS), and `rsync`.
 
-#### Option 1: Install directly from GitHub (pip)
+#### Option 1: Install directly from GitHub (pip, as root)
 
-On modern Ubuntu/Debian (PEP 668), you should install into a virtualenv instead of the system Python.
+On the backup host we recommend running the driver as **root** (so it can write to backup and log directories
+like `/var/backups/mysql` and `/var/log/mysql-backup`). On modern Ubuntu/Debian (PEP 668), install into a
+virtualenv instead of the system Python:
 
 ```bash
-python3 -m venv ~/mysql-backup-venv
-source ~/mysql-backup-venv/bin/activate
+sudo -i
+python3 -m venv /root/mysql-backup-venv
+source /root/mysql-backup-venv/bin/activate
 
 pip install --upgrade pip
 pip install "git+https://github.com/Mughees52/mysql-backup.git"
 ```
 
-This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs into `~/mysql-backup-venv/bin/`.
-Whenever you want to run backups:
+This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs into `/root/mysql-backup-venv/bin/`.
+Whenever you want to run backups on that host:
 
 ```bash
-source ~/mysql-backup-venv/bin/activate
+sudo -i
+source /root/mysql-backup-venv/bin/activate
+export MYSQL_BACKUP_PASSWORD='backup_pass'   # or your real secret
 mysql_backup_precheck
 mysql_backup_driver --job logical-daily
 ```
 
-#### Option 2: Install from source (local checkout + pip)
+#### Option 2: Install from source (local checkout + pip, as root)
 
 From the project root:
 
 ```bash
+sudo -i
+cd /opt/mysql-backup       # or wherever you cloned/downloaded the project
 python3 -m venv venv
 source venv/bin/activate
 
@@ -44,7 +51,7 @@ pip install --upgrade pip
 pip install .
 ```
 
-This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs into `./venv/bin/`.
+This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs into `/opt/mysql-backup/venv/bin/`.
 
 #### Option 3: Build and install RPM (RHEL/Alma/Rocky etc.)
 
@@ -71,18 +78,19 @@ into the system site-packages. You can then configure `/etc` or per-user configs
 
 ### Configuration (step by step)
 
-1. **Create the config directory and base config**
+1. **Create the config directory and base config (as root)**
 
-On each backup host, create the config directory and copy or create a config:
+On each backup host, as root, create the config directory and copy or create a config:
 
 ```bash
-mkdir -p ~/.config/mysql-backup
-cp etc/backup_config.yml ~/.config/mysql-backup/config.yml
+sudo -i
+mkdir -p /root/.config/mysql-backup
+cp etc/backup_config.yml /root/.config/mysql-backup/config.yml
 # or start from the top-level config.yaml example in this repo
-# cp config.yaml ~/.config/mysql-backup/config.yml
+# cp config.yaml /root/.config/mysql-backup/config.yml
 ```
 
-Then edit `~/.config/mysql-backup/config.yml`:
+Then edit `/root/.config/mysql-backup/config.yml`:
 
 - Define your MySQL instances under `instances`.
 - Add jobs under `jobs` for `logical`, `physical`, and `binlog` backups.
@@ -99,9 +107,9 @@ GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, SELECT, SHOW VIEW ON *.*
 FLUSH PRIVILEGES;
 ```
 
-3. **Export secrets as environment variables**
+3. **Export secrets as environment variables (as root)**
 
-On the backup host, set the environment variables referenced by your config (e.g. `password_env` and
+On the backup host, as root (or inside the root venv), set the environment variables referenced by your config (e.g. `password_env` and
 encryption keys). For a simple setup:
 
 ```bash
