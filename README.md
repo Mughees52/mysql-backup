@@ -11,17 +11,42 @@ Python 3 backup suite for MySQL/MariaDB providing:
 
 Ensure Python 3.9+ and required system tools are installed: `mydumper`, `xtrabackup`/`mariadb-backup`, `mysqlbinlog`, `gpg`, `aws` (if using S3), `gsutil` (if using GCS), and `rsync`.
 
-#### Option 1: Install from source (pip)
+#### Option 1: Install directly from GitHub (pip)
+
+On modern Ubuntu/Debian (PEP 668), you should install into a virtualenv instead of the system Python.
+
+```bash
+python3 -m venv ~/mysql-backup-venv
+source ~/mysql-backup-venv/bin/activate
+
+pip install --upgrade pip
+pip install "git+https://github.com/Mughees52/mysql-backup.git"
+```
+
+This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs into `~/mysql-backup-venv/bin/`.
+Whenever you want to run backups:
+
+```bash
+source ~/mysql-backup-venv/bin/activate
+mysql_backup_precheck
+mysql_backup_driver --job logical-daily
+```
+
+#### Option 2: Install from source (local checkout + pip)
 
 From the project root:
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
+
+pip install --upgrade pip
 pip install .
 ```
 
-This will install the `backup_driver` and `backup_precheck` CLIs.
+This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs into `./venv/bin/`.
 
-#### Option 2: Build and install RPM (RHEL/Alma/Rocky etc.)
+#### Option 3: Build and install RPM (RHEL/Alma/Rocky etc.)
 
 From the project root, create a source tarball and build the RPM (on an RPM-based build host):
 
