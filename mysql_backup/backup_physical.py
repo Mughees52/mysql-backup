@@ -40,7 +40,15 @@ def run_physical_backup(cfg: BackupConfig, job: JobConfig) -> None:
     incremental = opts.get("backup_mode") == "incremental"
     base_dir = _previous_full_backup_dir(cfg, instance.name) if incremental else None
 
-    cmd = [tool_path, f"--host={instance.host}", f"--port={instance.port}", f"--user={instance.user}", f"--target-dir={backup_dir}"]
+    # Base xtrabackup/mariadb-backup command for taking a backup
+    cmd = [
+        tool_path,
+        "--backup",
+        f"--host={instance.host}",
+        f"--port={instance.port}",
+        f"--user={instance.user}",
+        f"--target-dir={backup_dir}",
+    ]
     if instance.password:
         cmd.append(f"--password={instance.password}")
     if instance.socket:
