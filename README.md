@@ -69,9 +69,11 @@ sudo dnf install ~/rpmbuild/RPMS/noarch/mysql-backup-0.1.0-1*.rpm
 This will place `backup_driver` and `backup_precheck` under `/usr/bin` and install the Python package
 into the system site-packages. You can then configure `/etc` or per-user configs as described below.
 
-### Configuration
+### Configuration (step by step)
 
-Copy one of the example configs and adjust it for your environment:
+1. **Create the config directory and base config**
+
+On each backup host, create the config directory and copy or create a config:
 
 ```bash
 mkdir -p ~/.config/mysql-backup
@@ -80,53 +82,50 @@ cp etc/backup_config.yml ~/.config/mysql-backup/config.yml
 # cp config.yaml ~/.config/mysql-backup/config.yml
 ```
 
-Edit `~/.config/mysql-backup/config.yml`:
+Then edit `~/.config/mysql-backup/config.yml`:
 
 - Define your MySQL instances under `instances`.
 - Add jobs under `jobs` for `logical`, `physical`, and `binlog` backups.
 - Configure storage targets under `storage` for S3/rsync/GCS.
 - Optionally tune `global.default_timeout_seconds` and per-job backup options (encryption, dedup, etc.).
 
+2. **Create the MySQL backup user**
+
+On each MySQL server, create a dedicated backup user with the required privileges, for example:
+
+```sql
+CREATE USER IF NOT EXISTS 'backup'@'localhost' IDENTIFIED BY 'backup_pass';
+GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, SELECT, SHOW VIEW ON *.* TO 'backup'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+3. **Export secrets as environment variables**
+
+On the backup host, set the environment variables referenced by your config (e.g. `password_env` and
+encryption keys). For a simple setup:
+
+```bash
+export MYSQL_BACKUP_PASSWORD='backup_pass'
+# export XTRABACKUP_ENCRYPTION_KEY='...'   # if using xtrabackup encryption
+```
+
+4. **Validate configuration (optional but recommended)**
+
 You can validate your configuration without running any backups:
 
 ```bash
-backup_driver --validate-config
+mysql_backup_driver --validate-config
 ```
 
 For a quick smoke test (validate + show number of jobs detected):
 
 ```bash
-backup_driver --self-test
+mysql_backup_driver --self-test
 ```
 
 ### Running backups
 
-- List jobs:
-
-```bash
-backup_driver --list-jobs
-```
-
-- Run a specific job (e.g. logical daily backup):
-
-```bash
-backup_driver --job logical-daily
-```
-
-- Run only physical or binlog jobs by type:
-
-```bash
-backup_driver --type physical
-backup_driver --type binlog
-```
-
-- See what would run without executing (dry run):
-
-```bash
-backup_driver --job physical-daily --dry-run
-```
-
-### Pre-checks (recommended before enabling cron)
+1. **Run pre-checks (recommended before enabling cron)**
 
 Run comprehensive pre-checks against your config and target MySQL instances to ensure
 all binaries, permissions, and directories are in place before scheduling backups:
@@ -134,23 +133,50 @@ all binaries, permissions, and directories are in place before scheduling backup
 - Pre-check all jobs:
 
 ```bash
-backup_precheck
+mysql_backup_precheck
 ```
 
 - Pre-check a single job:
 
 ```bash
-backup_precheck --job logical-daily
+mysql_backup_precheck --job logical-daily
 ```
 
 - Pre-check all jobs for a specific instance:
 
 ```bash
-backup_precheck --instance prod-mysql1
+mysql_backup_precheck --instance prod-mysql1
 ```
 
 If any issue is found (missing binary, bad connectivity, missing env vars for encryption keys, etc.),
-`backup_precheck` will exit non‑zero and list the problems.
+`mysql_backup_precheck` will exit non‑zero and list the problems.
+
+2. **List and run jobs**
+
+- List jobs:
+
+```bash
+mysql_backup_driver --list-jobs
+```
+
+- Run a specific job (e.g. logical daily backup):
+
+```bash
+mysql_backup_driver --job logical-daily
+```
+
+- Run only physical or binlog jobs by type:
+
+```bash
+mysql_backup_driver --type physical
+mysql_backup_driver --type binlog
+```
+
+- See what would run without executing (dry run):
+
+```bash
+mysql_backup_driver --job physical-daily --dry-run
+```
 
 ### Notes for MySQL 8 (auth and permissions)
 
