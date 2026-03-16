@@ -14,17 +14,28 @@ def build_xtrabackup_encryption_args(options: dict) -> List[str]:
     if not options.get("use_xtra_encryption"):
         return []
 
-    env_key_var = options.get("xtra_key_env", "XTRABACKUP_ENCRYPTION_KEY")
-    key = os.getenv(env_key_var)
-    if not key:
-        raise RuntimeError(f"xtrabackup encryption requested but env var {env_key_var} is not set")
+    # Allow providing key via config (xtra_key), key file (xtra_key_file), or env var (xtra_key_env).
+    key = options.get("xtra_key")
+    key_file = options.get("xtra_key_file")
+    if key and key_file:
+        raise RuntimeError("xtrabackup encryption misconfigured: set only one of xtra_key or xtra_key_file")
+
+    if not key and not key_file:
+        env_key_var = options.get("xtra_key_env", "XTRABACKUP_ENCRYPTION_KEY")
+        key = os.getenv(env_key_var)
+        if not key:
+            raise RuntimeError(
+                "xtrabackup encryption requested but no key provided; set xtra_key, xtra_key_file, "
+                f"or env var {env_key_var}"
+            )
 
     algo = options.get("xtra_encrypt_algo", "AES256")
-    return [
-        f"--encrypt={algo}",
-        "--encrypt-key=" + key,
-        "--encrypt-key-file=-",  # be explicit that we read from stdin if desired
-    ]
+    args = [f"--encrypt={algo}"]
+    if key_file:
+        args.append("--encrypt-key-file=" + str(key_file))
+    else:
+        args.append("--encrypt-key=" + str(key))
+    return args
 
 
 def gpg_encrypt_directory(src_dir: str, output_path: str, recipient: str) -> None:

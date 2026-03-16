@@ -202,7 +202,11 @@ jobs:
       backup_mode: full          # full | incremental
       prepare_after_backup: true
       use_xtra_encryption: true
-      xtra_key_env: XTRABACKUP_ENCRYPTION_KEY
+      # Choose ONE:
+      # - xtra_key: "..."              # literal key in config (less secure)
+      # - xtra_key_file: "/root/.secrets/xtrabackup.key"  # recommended
+      # - xtra_key_env: XTRABACKUP_ENCRYPTION_KEY         # env var
+      xtra_key_file: /root/.secrets/xtrabackup.key
       xtra_encrypt_algo: AES256
       # gpg_recipient: "backup@example.com"
       # extra_args: ["--parallel=4"]
@@ -221,7 +225,11 @@ jobs:
       backup_mode: full
       prepare_after_backup: true
       use_xtra_encryption: true
-      xtra_key_env: PXC_XTRABACKUP_ENCRYPTION_KEY
+      # Choose ONE:
+      # - xtra_key: "..."              # literal key in config (less secure)
+      # - xtra_key_file: "/root/.secrets/pxc-xtrabackup.key"  # recommended
+      # - xtra_key_env: PXC_XTRABACKUP_ENCRYPTION_KEY         # env var
+      xtra_key_file: /root/.secrets/pxc-xtrabackup.key
       xtra_encrypt_algo: AES256
     encryption: xtrabackup_aes256
     dedup: true
@@ -238,7 +246,11 @@ jobs:
       backup_mode: incremental   # uses previous full as base
       prepare_after_backup: false
       use_xtra_encryption: true
-      xtra_key_env: XTRABACKUP_ENCRYPTION_KEY
+      # Choose ONE:
+      # - xtra_key: "..."              # literal key in config (less secure)
+      # - xtra_key_file: "/root/.secrets/xtrabackup.key"  # recommended
+      # - xtra_key_env: XTRABACKUP_ENCRYPTION_KEY         # env var
+      xtra_key_file: /root/.secrets/xtrabackup.key
       xtra_encrypt_algo: AES256
     encryption: xtrabackup_aes256
     dedup: true
@@ -298,7 +310,25 @@ encryption keys). For a simple setup:
 
 ```bash
 export MYSQL_BACKUP_PASSWORD='backup_pass'
-# export XTRABACKUP_ENCRYPTION_KEY='...'   # if using xtrabackup encryption
+# export XTRABACKUP_ENCRYPTION_KEY='...'   # if using xtrabackup encryption via xtra_key_env
+```
+
+Alternatively (recommended), configure xtrabackup encryption with a **root-readable key file** in your job's `backup_options`:
+
+```yaml
+backup_options:
+  use_xtra_encryption: true
+  xtra_key_file: /root/.secrets/xtrabackup.key
+  xtra_encrypt_algo: AES256
+```
+
+Or (less secure) set the literal key in config:
+
+```yaml
+backup_options:
+  use_xtra_encryption: true
+  xtra_key: "your-key-material-here"
+  xtra_encrypt_algo: AES256
 ```
 
 4. **Validate configuration (optional but recommended)**

@@ -50,7 +50,11 @@ jobs:
       backup_mode: full          # full | incremental
       prepare_after_backup: true
       use_xtra_encryption: true
-      xtra_key_env: XTRABACKUP_ENCRYPTION_KEY
+      # Choose ONE:
+      # - xtra_key: "..."              # literal key in config (less secure)
+      # - xtra_key_file: "/root/.secrets/xtrabackup.key"  # recommended
+      # - xtra_key_env: XTRABACKUP_ENCRYPTION_KEY         # env var (old behavior)
+      xtra_key_file: /root/.secrets/xtrabackup.key
       xtra_encrypt_algo: AES256
       # gpg_recipient: "backup@example.com"
       # extra_args: ["--parallel=4"]
