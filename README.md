@@ -30,11 +30,19 @@ This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs int
 Whenever you want to run backups on that host:
 
 ```bash
-sudo -i
 source /root/mysql-backup-venv/bin/activate
 export MYSQL_BACKUP_PASSWORD='backup_pass'   # or your real secret
 mysql_backup_precheck
 mysql_backup_driver --job logical-daily
+```
+
+Important: **do not run `sudo -i` again after activating the virtualenv**, or you may lose the venv `PATH`
+and see `command not found`. If that happens, either re-run `source /root/mysql-backup-venv/bin/activate`
+or call the binaries with full paths:
+
+```bash
+/root/mysql-backup-venv/bin/mysql_backup_precheck
+/root/mysql-backup-venv/bin/mysql_backup_driver --job logical-daily
 ```
 
 #### Option 2: Install from source (local checkout + pip, as root)
@@ -85,9 +93,13 @@ On each backup host, as root, create the config directory and copy or create a c
 ```bash
 sudo -i
 mkdir -p /root/.config/mysql-backup
+```
+
+If you installed via **GitHub (pip)** you won't have `etc/backup_config.yml` on disk. Create the config file
+manually (example below). If you cloned the repo or installed from source, you can copy the example config:
+
+```bash
 cp etc/backup_config.yml /root/.config/mysql-backup/config.yml
-# or start from the top-level config.yaml example in this repo
-# cp config.yaml /root/.config/mysql-backup/config.yml
 ```
 
 Then edit `/root/.config/mysql-backup/config.yml`:
@@ -96,6 +108,43 @@ Then edit `/root/.config/mysql-backup/config.yml`:
 - Add jobs under `jobs` for `logical`, `physical`, and `binlog` backups.
 - Configure storage targets under `storage` for S3/rsync/GCS.
 - Optionally tune `global.default_timeout_seconds` and per-job backup options (encryption, dedup, etc.).
+
+Minimal example config (logical backup):
+
+```yaml
+global:
+  backup_root: /var/backups/mysql
+  log_dir: /var/log/mysql-backup
+  tmp_dir: /tmp/mysql-backup
+  default_encryption: none
+  default_retention_days: 3
+  default_timeout_seconds: 1800
+
+instances:
+  - name: local-mysql
+    host: 127.0.0.1
+    port: 3306
+    user: backup
+    password_env: MYSQL_BACKUP_PASSWORD
+    pxc: false
+
+jobs:
+  - name: logical-daily
+    instance: local-mysql
+    type: logical
+    schedule_hint: "0 2 * * *"
+    backup_options:
+      mydumper_path: /usr/bin/mydumper
+      threads: 2
+      chunk_filesize: 64
+      rows: 50000
+      compress: true
+    encryption: null
+    dedup: false
+    offsite_targets: []
+
+storage: []
+```
 
 2. **Create the MySQL backup user**
 
@@ -202,7 +251,7 @@ mysql_backup_driver --job physical-daily --dry-run
 ### Cron example (VM/bare metal)
 
 ```bash
-0 2 * * * /usr/local/bin/mysql_backup_driver --job logical-daily >> /var/log/mysql-msp-backup/cron.log 2>&1
+0 2 * * * /root/mysql-backup-venv/bin/mysql_backup_driver --job logical-daily >> /var/log/mysql-backup/cron.log 2>&1
 ```
 
 ### Kubernetes CronJob example
@@ -221,7 +270,7 @@ spec:
           containers:
             - name: backup
               image: your-registry/mysql-backup:latest
-              args: ["backup_driver", "--config", "/etc/backup/config.yml", "--job", "logical-daily"]
+              args: ["mysql_backup_driver", "--config", "/etc/backup/config.yml", "--job", "logical-daily"]
               volumeMounts:
                 - name: config
                   mountPath: /etc/backup
@@ -229,6 +278,6 @@ spec:
           volumes:
             - name: config
               configMap:
-                name: mysql-msp-backup-config
+                name: mysql-backup-config
 ```
 
