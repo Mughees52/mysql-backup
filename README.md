@@ -45,6 +45,13 @@ or call the binaries with full paths:
 /root/mysql-backup-venv/bin/mysql_backup_driver --job logical-daily
 ```
 
+To **upgrade an existing venv install** to the latest version from `main`:
+
+```bash
+source /root/mysql-backup-venv/bin/activate
+pip install --force-reinstall --no-cache-dir "git+https://github.com/Mughees52/mysql-backup.git@main"
+```
+
 #### Option 2: Install from source (local checkout + pip, as root)
 
 From the project root:
@@ -295,15 +302,17 @@ storage:
 
 2. **Create the MySQL backup user**
 
-On each MySQL server, create a dedicated backup user with the required privileges, for example:
+On each MySQL server, create a dedicated backup user with the required privileges.
+For MySQL 8+ with `xtrabackup`, you **must** grant `BACKUP_ADMIN` as well:
 
 ```sql
 CREATE USER IF NOT EXISTS 'backup'@'localhost' IDENTIFIED BY 'backup_pass';
-GRANT RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, SELECT, SHOW VIEW ON *.* TO 'backup'@'localhost';
+GRANT BACKUP_ADMIN, RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, SELECT, SHOW VIEW
+  ON *.* TO 'backup'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-3. **Export secrets as environment variables (as root)**
+3. **Provide MySQL credentials and (optionally) encryption keys**
 
 On the backup host, as root (or inside the root venv), set the environment variables referenced by your config (e.g. `password_env` and
 encryption keys). For a simple setup:
@@ -320,6 +329,15 @@ backup_options:
   use_xtra_encryption: true
   xtra_key_file: /root/.secrets/xtrabackup.key
   xtra_encrypt_algo: AES256
+```
+
+To create a suitable AES-256 key file for xtrabackup (expects **raw 32‑byte key**):
+
+```bash
+umask 077
+openssl rand -out /root/.secrets/xtrabackup.key 32
+chmod 600 /root/.secrets/xtrabackup.key
+wc -c /root/.secrets/xtrabackup.key   # should print: 32 /root/.secrets/xtrabackup.key
 ```
 
 Or (less secure) set the literal key in config:
@@ -372,6 +390,22 @@ mysql_backup_precheck --instance prod-mysql1
 
 If any issue is found (missing binary, bad connectivity, missing env vars for encryption keys, etc.),
 `mysql_backup_precheck` will exit non‑zero and list the problems.
+
+If physical backups fail with errors like:
+
+- `Access denied; you need (at least one of) the BACKUP_ADMIN privilege(s) for this operation`
+- `encryption: unable to set libgcrypt cipher key - ... Invalid key length`
+- `Can't create/write to file '.../xtrabackup_logfile.xbcrypt' (OS errno 17 - File exists)`
+
+then:
+
+- Ensure the backup user has `BACKUP_ADMIN` as shown above.
+- Ensure the xtrabackup key file is a **32‑byte binary file** (see the `openssl rand -out ... 32` example).
+- Remove any partial backup directory and rerun, e.g.:
+
+  ```bash
+  rm -rf /var/backups/mysql/<instance>/physical/<timestamp-dir>
+  ```
 
 2. **List and run jobs**
 
