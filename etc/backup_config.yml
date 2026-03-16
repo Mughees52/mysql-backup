@@ -14,10 +14,11 @@ instances:
     pxc: false
 
 jobs:
+  # Logical daily backup
   - name: logical-daily
     instance: example-instance
     type: logical
-    schedule_hint: daily
+    schedule_hint: "0 2 * * *"
     backup_options:
       mydumper_path: /usr/bin/mydumper
       threads: 4
@@ -27,6 +28,33 @@ jobs:
     encryption: null
     dedup: false
     offsite_targets: []
+
+  # Full physical backup (uncomment and adjust if xtrabackup is installed)
+  # - name: physical-full-daily
+  #   instance: example-instance
+  #   type: physical
+  #   schedule_hint: "0 1 * * *"
+  #   backup_options:
+  #     tool: xtrabackup
+  #     xtrabackup_path: /usr/bin/xtrabackup
+  #     backup_mode: full
+  #     prepare_after_backup: true
+  #     use_xtra_encryption: false
+  #   encryption: null
+  #   dedup: true
+  #   offsite_targets: []
+
+  # Binlog backup every 5 minutes (uncomment and adjust if binlogs are enabled)
+  # - name: binlog-5min
+  #   instance: example-instance
+  #   type: binlog
+  #   schedule_hint: "*/5 * * * *"
+  #   backup_options:
+  #     mysqlbinlog_path: /usr/bin/mysqlbinlog
+  #     binlog_file: mysql-bin.000001
+  #   encryption: null
+  #   dedup: false
+  #   offsite_targets: []
 
 storage: []
 
