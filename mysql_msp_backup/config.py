@@ -12,7 +12,11 @@ class GlobalConfig:
     tmp_dir: str
     default_encryption: str = "none"
     default_retention_days: int = 7
+    weekly_retention_weeks: int = 4
     default_timeout_seconds: int = 3600
+    disk_space_factor: float = 2.5
+    debug: bool = False
+    graceful_stop_file: Optional[str] = None
 
 
 @dataclass
@@ -27,6 +31,8 @@ class InstanceConfig:
     pxc: bool = False
     pxc_desync: bool = False
     pxc_cluster_name: Optional[str] = None
+    replica_only: bool = False
+    read_only_only: bool = False
 
 
 @dataclass
@@ -39,12 +45,14 @@ class JobConfig:
     encryption: Optional[str] = None
     dedup: bool = False
     offsite_targets: List[str] = field(default_factory=list)
+    retention_days: Optional[int] = None
+    weekly_retention_weeks: Optional[int] = None
 
 
 @dataclass
 class StorageTargetConfig:
     name: str
-    type: str  # s3|rsync|gcs
+    type: str  # s3|rsync|gcs|azure
     options: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -83,10 +91,14 @@ def load_config(path: str) -> BackupConfig:
         global_cfg = GlobalConfig(
             backup_root=global_raw["backup_root"],
             log_dir=global_raw["log_dir"],
-            tmp_dir=global_raw.get("tmp_dir", "/tmp/mysql-msp-backup"),
+            tmp_dir=global_raw.get("tmp_dir", "/tmp/mysql-backup"),
             default_encryption=global_raw.get("default_encryption", "none"),
             default_retention_days=int(global_raw.get("default_retention_days", 7)),
+            weekly_retention_weeks=int(global_raw.get("weekly_retention_weeks", 4)),
             default_timeout_seconds=int(global_raw.get("default_timeout_seconds", 3600)),
+            disk_space_factor=float(global_raw.get("disk_space_factor", 2.5)),
+            debug=bool(global_raw.get("debug", False)),
+            graceful_stop_file=global_raw.get("graceful_stop_file"),
         )
     except KeyError as exc:
         raise ConfigError(f"Missing required global config key: {exc}") from exc
@@ -106,12 +118,16 @@ def load_config(path: str) -> BackupConfig:
             pxc=bool(inst.get("pxc", False)),
             pxc_desync=bool(inst.get("pxc_desync", False)),
             pxc_cluster_name=inst.get("pxc_cluster_name"),
+            replica_only=bool(inst.get("replica_only", False)),
+            read_only_only=bool(inst.get("read_only_only", False)),
         )
 
     jobs_raw = raw.get("jobs") or []
     jobs: Dict[str, JobConfig] = {}
     for job in jobs_raw:
         name = job["name"]
+        ret_days = job.get("retention_days")
+        wk_ret = job.get("weekly_retention_weeks")
         jobs[name] = JobConfig(
             name=name,
             instance=job["instance"],
@@ -121,15 +137,20 @@ def load_config(path: str) -> BackupConfig:
             encryption=job.get("encryption"),
             dedup=bool(job.get("dedup", False)),
             offsite_targets=job.get("offsite_targets") or [],
+            retention_days=int(ret_days) if ret_days is not None else None,
+            weekly_retention_weeks=int(wk_ret) if wk_ret is not None else None,
         )
 
     storage_raw = raw.get("storage") or []
     storage_targets: Dict[str, StorageTargetConfig] = {}
     for st in storage_raw:
         name = st["name"]
+        st_type = st["type"]
+        if st_type not in {"s3", "rsync", "gcs", "azure"}:
+            raise ConfigError(f"Storage target {name} has unsupported type: {st_type}")
         storage_targets[name] = StorageTargetConfig(
             name=name,
-            type=st["type"],
+            type=st_type,
             options=st.get("options", {}) or {},
         )
 
@@ -157,6 +178,10 @@ def validate_config(cfg: BackupConfig) -> None:
         for target in job.offsite_targets:
             if target not in cfg.storage_targets:
                 raise ConfigError(f"Job {job.name} references unknown storage target {target}")
+        if job.retention_days is not None and job.retention_days < 1:
+            raise ConfigError(f"Job {job.name} has invalid retention_days: {job.retention_days}")
+        if job.weekly_retention_weeks is not None and job.weekly_retention_weeks < 0:
+            raise ConfigError(f"Job {job.name} has invalid weekly_retention_weeks: {job.weekly_retention_weeks}")
 
     # Simple check that directories are writable/creatable
     for path_key, path in [

@@ -38,3 +38,40 @@ def apply_retention_days(base: str, instance: str, job_type: str, days: int) -> 
             logger.info("Removing expired backup", extra={"path": path})
             shutil.rmtree(path, ignore_errors=True)
 
+
+def apply_weekly_retention(base: str, instance: str, job_type: str, weeks: int) -> None:
+    """
+    Keep one backup per calendar week for the most recent `weeks` weeks, removing
+    all but the latest backup within each older week outside the daily window.
+
+    This mirrors the GASCAN MYDUMPER_WEEKLY_PURGE approach: daily backups are
+    kept for the standard retention period, and one representative backup per
+    week is preserved for the weekly window beyond that.
+    """
+    logger = get_logger()
+    if weeks <= 0:
+        return
+
+    cutoff = datetime.now(timezone.utc) - timedelta(weeks=weeks)
+    dirs = list_backup_dirs(base, instance, job_type)
+
+    by_week: dict = {}
+    for path in dirs:
+        name = os.path.basename(path)
+        try:
+            ts = datetime.strptime(name, "%Y%m%d-%H%M%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if ts < cutoff:
+            logger.info("Removing backup outside weekly window", extra={"path": path})
+            shutil.rmtree(path, ignore_errors=True)
+            continue
+        week_key = ts.isocalendar()[:2]  # (year, week_number)
+        by_week.setdefault(week_key, []).append((ts, path))
+
+    for week_key, entries in by_week.items():
+        entries.sort(key=lambda x: x[0])
+        for _, path in entries[:-1]:
+            logger.info("Removing duplicate weekly backup", extra={"path": path, "week": week_key})
+            shutil.rmtree(path, ignore_errors=True)
+

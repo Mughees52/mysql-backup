@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Dict
+from typing import Dict, List
 
 from .config import BackupConfig, StorageTargetConfig
 from .logging_utils import get_logger
@@ -36,6 +36,42 @@ def _push_gcs(target: StorageTargetConfig, local_path: str) -> None:
     run_with_retries(["gsutil", "-m", "cp", "-r", local_path, dest], check=True)
 
 
+def _push_azure(target: StorageTargetConfig, local_path: str) -> None:
+    """
+    Upload to Azure Blob Storage using the Azure CLI (`az storage blob upload-batch`).
+
+    Required options:
+      container  - storage container name
+    Optional options:
+      account_name  - storage account name (or set AZURE_STORAGE_ACCOUNT env var)
+      sas_token     - SAS token string (or set AZURE_STORAGE_SAS_TOKEN env var)
+      connection_string - full connection string (or set AZURE_STORAGE_CONNECTION_STRING)
+      destination_path  - virtual directory prefix inside the container
+    """
+    logger = get_logger()
+    opts = target.options
+    container = opts["container"]
+    dest_path = opts.get("destination_path", "")
+    dest = f"{container}/{dest_path}".rstrip("/") if dest_path else container
+
+    cmd = ["az", "storage", "blob", "upload-batch", "--source", local_path, "--destination", dest]
+
+    account_name = opts.get("account_name") or os.getenv("AZURE_STORAGE_ACCOUNT")
+    if account_name:
+        cmd.extend(["--account-name", account_name])
+
+    sas_token = opts.get("sas_token") or os.getenv("AZURE_STORAGE_SAS_TOKEN")
+    if sas_token:
+        cmd.extend(["--sas-token", sas_token])
+
+    connection_string = opts.get("connection_string") or os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+    if connection_string:
+        cmd.extend(["--connection-string", connection_string])
+
+    logger.info("Uploading backup to Azure Blob Storage", extra={"local": local_path, "dest": dest})
+    run_with_retries(cmd, check=True)
+
+
 def push_offsite(cfg: BackupConfig, job_name: str, local_path: str, target_names: list[str]) -> None:
     logger = get_logger()
     for name in target_names:
@@ -50,6 +86,8 @@ def push_offsite(cfg: BackupConfig, job_name: str, local_path: str, target_names
                 _push_rsync(target, local_path)
             elif target.type == "gcs":
                 _push_gcs(target, local_path)
+            elif target.type == "azure":
+                _push_azure(target, local_path)
             else:
                 logger.warning("Unsupported storage target type", extra={"type": target.type})
         except Exception:
