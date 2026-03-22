@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(multipass exec:*)",
+      "Bash(multipass info:*)",
+      "Bash(multipass stop:*)",
+      "Bash(multipass set:*)",
+      "Bash(multipass start:*)",
+      "Bash(multipass transfer:*)"
+    ]
+  }
+}

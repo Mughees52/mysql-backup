@@ -69,6 +69,7 @@ def run_binlog_backup(cfg: BackupConfig, job: JobConfig) -> None:
 
     cmd = [
         mysqlbinlog_path,
+        "--read-from-remote-server",
         f"--host={instance.host}",
         f"--port={instance.port}",
         f"--user={instance.user}",

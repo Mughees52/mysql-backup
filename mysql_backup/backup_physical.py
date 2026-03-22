@@ -113,15 +113,19 @@ def run_physical_backup(cfg: BackupConfig, job: JobConfig) -> None:
     backup_dir = make_backup_dir(global_cfg.backup_root, instance.name, "physical")
     logger.info("Starting physical backup", extra={"job": job.name, "backup_dir": backup_dir, "incremental": incremental})
 
-    cmd = [
-        tool_path,
+    defaults_file = opts.get("defaults_file")
+    cmd = [tool_path]
+    if defaults_file:
+        # --defaults-file must be the first option after the binary
+        cmd.append(f"--defaults-file={defaults_file}")
+    cmd.extend([
         "--backup",
         f"--host={instance.host}",
         f"--port={instance.port}",
         f"--user={instance.user}",
         f"--target-dir={backup_dir}",
-    ]
-    if instance.password:
+    ])
+    if not defaults_file and instance.password:
         cmd.append(f"--password={instance.password}")
     if instance.socket:
         cmd.append(f"--socket={instance.socket}")
@@ -154,7 +158,29 @@ def run_physical_backup(cfg: BackupConfig, job: JobConfig) -> None:
         run_with_retries(cmd, check=True, timeout=timeout)
 
         if opts.get("prepare_after_backup", True):
-            prepare_cmd = [tool_path, f"--target-dir={backup_dir}", "--prepare"]
+            # Encrypted backups must be decrypted before prepare: xtrabackup
+            # cannot apply the redo log to .xbcrypt files directly.
+            if opts.get("use_xtra_encryption"):
+                algo = opts.get("xtra_encrypt_algo", "AES256")
+                decrypt_cmd = [tool_path]
+                if defaults_file:
+                    decrypt_cmd.append(f"--defaults-file={defaults_file}")
+                decrypt_cmd.extend([f"--decrypt={algo}", f"--target-dir={backup_dir}"])
+                key_file = opts.get("xtra_key_file")
+                key = opts.get("xtra_key") or (
+                    __import__("os").getenv(opts.get("xtra_key_env", "XTRABACKUP_ENCRYPTION_KEY"))
+                    if not key_file else None
+                )
+                if key_file:
+                    decrypt_cmd.append(f"--encrypt-key-file={key_file}")
+                elif key:
+                    decrypt_cmd.append(f"--encrypt-key={key}")
+                run_with_retries(decrypt_cmd, check=True, timeout=timeout)
+
+            prepare_cmd = [tool_path]
+            if defaults_file:
+                prepare_cmd.append(f"--defaults-file={defaults_file}")
+            prepare_cmd.extend([f"--target-dir={backup_dir}", "--prepare"])
             prepare_memory = opts.get("prepare_memory")
             if prepare_memory:
                 prepare_cmd.append(f"--use-memory={prepare_memory}")

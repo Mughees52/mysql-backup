@@ -1,146 +1,169 @@
-## mysql-backup
+# mysql-backup
 
 Python 3 backup suite for MySQL/MariaDB providing:
 
-- Logical backups via `mydumper` (full and incremental, trigger dump, less-locking, FTWRL guardian)
-- Physical backups via `xtrabackup` / `mariadb-backup` (full and incremental, configurable full-backup cycle)
-- Binlog backups via `mysqlbinlog` (continuous streaming with position tracking)
-- Encryption (xtrabackup AES256, optional GPG), deduplication, disk-space checks, PXC desync, and offsite copies (S3, rsync, GCS, Azure Blob Storage)
-- Replica-aware safety gates (`replica_only`, `read_only_only`)
-- Kill long-running queries before physical backup to avoid blocking
-- Weekly retention tiers on top of daily retention
-- Lock file to prevent concurrent driver instances
-- Graceful stop support (clean shutdown between jobs via a sentinel file)
+- **Logical backups** via `mydumper` — full and incremental, trigger dump, less-locking, FTWRL guardian
+- **Physical backups** via `xtrabackup` / `mariadb-backup` — full and incremental, configurable full-backup cycle, AES-256 encryption
+- **Binlog backups** via `mysqlbinlog` — continuous remote streaming with position tracking
+- **Offsite storage** — S3, rsync, GCS, Azure Blob Storage
+- **Retention** — daily + weekly tiers (GASCAN-compliant)
+- **Safety gates** — replica-aware (`replica_only`, `read_only_only`), disk-space checks (2.5× by default)
+- **PXC support** — automatic desync/resync around physical backups on Percona XtraDB Cluster nodes
+- **Operational** — lock file (prevents concurrent runs), graceful stop, kill long-running queries before backup
 
-### Installation
+---
 
-Ensure Python 3.9+ and required system tools are installed: `mydumper`, `xtrabackup`/`mariadb-backup`, `mysqlbinlog`, `gpg`, `aws` (if using S3), `gsutil` (if using GCS), `az` (if using Azure Blob Storage), and `rsync`.
+## Table of Contents
 
-**Backup disk sizing:** The backup host disk should have at least **2.5× the size of the MySQL data directory** free. The driver enforces this by default via `disk_space_factor: 2.5` in the global config.
+1. [Prerequisites](#1-prerequisites)
+2. [Installation](#2-installation)
+3. [MySQL user setup](#3-mysql-user-setup)
+4. [Configuration](#4-configuration)
+5. [Running backups](#5-running-backups)
+6. [Scheduling with cron](#6-scheduling-with-cron)
+7. [How-to guides](#7-how-to-guides)
+   - [How to set up physical backups with AES-256 encryption](#how-to-set-up-physical-backups-with-aes-256-encryption)
+   - [How to set up binlog backups](#how-to-set-up-binlog-backups)
+   - [How to restore a logical backup](#how-to-restore-a-logical-backup)
+   - [How to restore a physical backup](#how-to-restore-a-physical-backup)
+   - [How to do point-in-time recovery using binlogs](#how-to-do-point-in-time-recovery-using-binlogs)
+   - [How to verify a physical backup without restoring](#how-to-verify-a-physical-backup-without-restoring)
+   - [How to upgrade the tool](#how-to-upgrade-the-tool)
+   - [How to run multiple configs on the same host](#how-to-run-multiple-configs-on-the-same-host)
+   - [How to use graceful stop](#how-to-use-graceful-stop)
+8. [Configuration reference](#8-configuration-reference)
+9. [Troubleshooting](#9-troubleshooting)
 
-#### Option 1: Install directly from GitHub (pip, as root)
+---
 
-On the backup host we recommend running the driver as **root** (so it can write to backup and log directories
-like `/var/backups/mysql` and `/var/log/mysql-backup`). On modern Ubuntu/Debian (PEP 668), install into a
-virtualenv instead of the system Python:
+## 1. Prerequisites
+
+**System tools** — install before using:
+
+| Tool | Required for |
+|------|-------------|
+| `mydumper` | Logical backups |
+| `xtrabackup` or `mariadb-backup` | Physical backups |
+| `mysqlbinlog` | Binlog backups |
+| `gpg` | GPG encryption (optional) |
+| `rsync` | Deduplication + rsync offsite |
+| `aws` CLI | S3 offsite (optional) |
+| `gsutil` | GCS offsite (optional) |
+| `az` CLI | Azure Blob offsite (optional) |
+
+**Python:** 3.9 or later.
+
+**Disk sizing:** The backup host must have at least **2.5× the size of the MySQL data directory free** on the backup volume. The driver enforces this before every job (configurable via `disk_space_factor`).
+
+**xtrabackup version compatibility:** xtrabackup 8.x is required for MySQL 8.x. xtrabackup 2.4.x is for MySQL 5.7 only. Running a mismatched version will produce `unsupported server version` errors.
+
+---
+
+## 2. Installation
+
+Run the driver as **root** so it can write to `/var/backups/mysql` and `/var/log/mysql-backup`. On Ubuntu/Debian (PEP 668), install into a virtualenv:
+
+### Option A — from GitHub (recommended)
 
 ```bash
 sudo -i
 python3 -m venv /root/mysql-backup-venv
 source /root/mysql-backup-venv/bin/activate
-
 pip install --upgrade pip
 pip install "git+https://github.com/Mughees52/mysql-backup.git"
 ```
 
-This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs into `/root/mysql-backup-venv/bin/`.
-Whenever you want to run backups on that host:
+The CLIs are installed at `/root/mysql-backup-venv/bin/mysql_backup_driver` and `mysql_backup_precheck`.
 
-```bash
-source /root/mysql-backup-venv/bin/activate
-export MYSQL_BACKUP_PASSWORD='backup_pass'   # or your real secret
-mysql_backup_precheck
-mysql_backup_driver --job logical-daily
-```
-
-Important: **do not run `sudo -i` again after activating the virtualenv**, or you may lose the venv `PATH`
-and see `command not found`. If that happens, either re-run `source /root/mysql-backup-venv/bin/activate`
-or call the binaries with full paths:
-
-```bash
-/root/mysql-backup-venv/bin/mysql_backup_precheck
-/root/mysql-backup-venv/bin/mysql_backup_driver --job logical-daily
-```
-
-To **upgrade an existing venv install** to the latest version from `main`:
+To **upgrade** an existing install to the latest `main`:
 
 ```bash
 source /root/mysql-backup-venv/bin/activate
 pip install --force-reinstall --no-cache-dir "git+https://github.com/Mughees52/mysql-backup.git@main"
 ```
 
-#### Option 2: Install from source (local checkout + pip, as root)
-
-From the project root:
+### Option B — from source
 
 ```bash
 sudo -i
-cd /opt/mysql-backup       # or wherever you cloned/downloaded the project
+cd /opt/mysql-backup        # or wherever you cloned the repo
 python3 -m venv venv
 source venv/bin/activate
-
 pip install --upgrade pip
 pip install .
 ```
 
-This will install the `mysql_backup_driver` and `mysql_backup_precheck` CLIs into `/opt/mysql-backup/venv/bin/`.
-
-#### Option 3: Build and install RPM (RHEL/Alma/Rocky etc.)
-
-From the project root, create a source tarball and build the RPM (on an RPM-based build host):
+### Option C — RPM (RHEL / Alma / Rocky)
 
 ```bash
 VERSION=0.1.0
-tar czf mysql-backup-${VERSION}.tar.gz "Mughees scripts"  # or rename directory to mysql-backup-${VERSION}
+tar czf mysql-backup-${VERSION}.tar.gz mysql-backup-${VERSION}/
 mv mysql-backup-${VERSION}.tar.gz ~/rpmbuild/SOURCES/
 cp mysql-backup.spec ~/rpmbuild/SPECS/
-
-cd ~/rpmbuild/SPECS
-rpmbuild -ba mysql-backup.spec
+rpmbuild -ba ~/rpmbuild/SPECS/mysql-backup.spec
+sudo dnf install ~/rpmbuild/RPMS/noarch/mysql-backup-${VERSION}-1*.rpm
 ```
 
-Then install on target servers:
+> **Note:** Do not run `sudo -i` again after activating the virtualenv — it resets `PATH`. If you get `command not found`, re-run `source /root/mysql-backup-venv/bin/activate` or use the full path `/root/mysql-backup-venv/bin/mysql_backup_driver`.
 
-```bash
-sudo dnf install ~/rpmbuild/RPMS/noarch/mysql-backup-0.1.0-1*.rpm
+---
+
+## 3. MySQL user setup
+
+Create a dedicated backup user on each MySQL server. The required grants depend on which backup types you use:
+
+```sql
+-- Minimum for logical (mydumper) and physical (xtrabackup) backups:
+CREATE USER IF NOT EXISTS 'backup'@'localhost' IDENTIFIED BY 'strong_password_here';
+GRANT SELECT, RELOAD, PROCESS, LOCK TABLES, REPLICATION CLIENT, SHOW VIEW, BACKUP_ADMIN
+  ON *.* TO 'backup'@'localhost';
+
+-- Additional grant required for binlog streaming (mysqlbinlog --read-from-remote-server):
+GRANT REPLICATION SLAVE ON *.* TO 'backup'@'localhost';
+
+FLUSH PRIVILEGES;
 ```
 
-This will place `backup_driver` and `backup_precheck` under `/usr/bin` and install the Python package
-into the system site-packages. You can then configure `/etc` or per-user configs as described below.
+**Why each grant is needed:**
 
-### Configuration (step by step)
+| Grant | Used by |
+|-------|---------|
+| `SELECT` | Estimating database size, mydumper table dumps |
+| `RELOAD` | `FLUSH TABLES WITH READ LOCK` (FTWRL) during physical backup |
+| `PROCESS` | Listing and killing long-running queries |
+| `LOCK TABLES` | Table-level locking during mydumper |
+| `REPLICATION CLIENT` | `SHOW BINARY LOGS`, `SHOW MASTER STATUS` |
+| `SHOW VIEW` | Dumping views with mydumper |
+| `BACKUP_ADMIN` | xtrabackup on MySQL 8+ (`LOCK INSTANCE FOR BACKUP`) |
+| `REPLICATION SLAVE` | `mysqlbinlog --read-from-remote-server` binlog streaming |
 
-1. **Create the config directory and base config (as root)**
+---
 
-On each backup host, as root, create the config directory and copy or create a config:
+## 4. Configuration
+
+### 4.1 Create the config directory
 
 ```bash
 sudo -i
 mkdir -p /root/.config/mysql-backup
 ```
 
-If you installed via **GitHub (pip)** you won't have `etc/backup_config.yml` on disk. Create the config file
-manually (example below). If you cloned the repo or installed from source, you can copy the example config:
-
-```bash
-cp etc/backup_config.yml /root/.config/mysql-backup/config.yml
-```
-
-Then edit `/root/.config/mysql-backup/config.yml`:
-
-- Define your MySQL instances under `instances`.
-- Add jobs under `jobs` for `logical`, `physical`, and `binlog` backups.
-- Configure storage targets under `storage` for S3/rsync/GCS.
-- Optionally tune `global.default_timeout_seconds` and per-job backup options (encryption, dedup, etc.).
-
-Minimal example config (logical backup):
+### 4.2 Minimal config (logical backup only)
 
 ```yaml
+# /root/.config/mysql-backup/config.yml
 global:
   backup_root: /var/backups/mysql
   log_dir: /var/log/mysql-backup
   tmp_dir: /tmp/mysql-backup
-  default_encryption: none
-  default_retention_days: 3
-  default_timeout_seconds: 1800
+  default_retention_days: 7
 
 instances:
   - name: local-mysql
-    host: 127.0.0.1
+    host: localhost
     port: 3306
     user: backup
-    password_env: MYSQL_BACKUP_PASSWORD
-    pxc: false
+    password_env: MYSQL_BACKUP_PASSWORD   # export this before running
 
 jobs:
   - name: logical-daily
@@ -149,56 +172,48 @@ jobs:
     schedule_hint: "0 2 * * *"
     backup_options:
       mydumper_path: /usr/bin/mydumper
-      threads: 2
-      chunk_filesize: 64
-      rows: 50000
+      threads: 4
       compress: true
-    encryption: null
-    dedup: false
     offsite_targets: []
 
 storage: []
 ```
 
-#### Global config reference
+Set the password before running:
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `backup_root` | *(required)* | Root directory where all backups are stored |
-| `log_dir` | *(required)* | Directory for log files |
-| `tmp_dir` | `/tmp/mysql-backup` | Temp directory (binlog state files, etc.) |
-| `default_encryption` | `none` | `none` \| `xtrabackup_aes256` \| `gpg` |
-| `default_retention_days` | `7` | How many days of daily backups to keep |
-| `weekly_retention_weeks` | `4` | How many weeks of weekly backups to keep (one backup per calendar week beyond the daily window) |
-| `default_timeout_seconds` | `3600` | Per-job wall-clock timeout |
-| `disk_space_factor` | `2.5` | Required free space multiplier against the estimated DB size (2.5× recommended) |
-| `debug` | `false` | Enable verbose debug logging |
-| `graceful_stop_file` | *(none)* | Path to a sentinel file; if it exists, the driver finishes the current job then stops cleanly |
+```bash
+export MYSQL_BACKUP_PASSWORD='your_password_here'
+mysql_backup_driver --job logical-daily
+```
 
-Full example config (logical + physical + binlog + offsite uploads) is available in the repo as `config.yaml`.
-For convenience, here is the full content you can adapt:
+### 4.3 Full config example (logical + physical + binlog)
 
 ```yaml
 global:
   backup_root: /var/backups/mysql
   log_dir: /var/log/mysql-backup
   tmp_dir: /tmp/mysql-backup
-  default_encryption: none          # none | xtrabackup_aes256 | gpg
+  default_encryption: none
   default_retention_days: 7
-  weekly_retention_weeks: 4         # keep one backup/week for the last 4 weeks
-  disk_space_factor: 2.5            # require 2.5x DB size free before backup
-  debug: false
+  weekly_retention_weeks: 4
+  disk_space_factor: 2.5
+  default_timeout_seconds: 3600
   graceful_stop_file: /root/.config/mysql-backup/GRACEFUL_STOP
 
 instances:
   - name: prod-mysql1
-    host: 10.0.0.10
+    host: localhost
     port: 3306
     user: backup
     password_env: MYSQL_BACKUP_PASSWORD
-    pxc: false
-    replica_only: true              # only run backups if this host is an active replica
-    read_only_only: false           # set to true to additionally require read_only=ON
+
+  - name: prod-replica1
+    host: localhost
+    port: 3306
+    user: backup
+    password_env: MYSQL_BACKUP_PASSWORD
+    replica_only: true          # skip backup if not currently an active replica
+    read_only_only: false
 
   - name: prod-pxc1
     host: 10.0.1.10
@@ -208,15 +223,13 @@ instances:
     pxc: true
     pxc_desync: true
     pxc_cluster_name: prod-pxc
-    replica_only: false
 
 jobs:
-  # Logical daily backup from standalone MySQL
   - name: logical-daily
     instance: prod-mysql1
     type: logical
     schedule_hint: "0 2 * * *"
-    retention_days: 7               # override global retention per-job
+    retention_days: 7
     weekly_retention_weeks: 4
     backup_options:
       mydumper_path: /usr/bin/mydumper
@@ -224,102 +237,42 @@ jobs:
       chunk_filesize: 64
       rows: 500000
       compress: true
-      dump_triggers: true           # dump stored triggers alongside tables
-      less_locking: true            # reduce metadata lock hold time
-      use_numa: false               # set to true if numactl is available
-      ftwrl_guardian: false         # abort if FTWRL takes too long
-      # incremental_since_days: 1   # only dump tables modified in last N days
-      # extra_args: ["--long-query-guard=60", "--success-on-1146"]
-    encryption: null
-    dedup: false
+      dump_triggers: true
+      less_locking: true
     offsite_targets: ["s3-main", "rsync-dr"]
 
-  # Physical full backup from standalone MySQL
-  - name: physical-full-daily
+  - name: physical-daily
     instance: prod-mysql1
     type: physical
     schedule_hint: "0 1 * * *"
-    backup_options:
-      tool: xtrabackup
-      xtrabackup_path: /usr/bin/xtrabackup
-      backup_mode: full             # full | incremental
-      prepare_after_backup: true
-      prepare_memory: 2G            # memory available to InnoDB during --prepare
-      verify_after_backup: false    # run --prepare --export after backup as sanity check
-      save_replica_info: true       # save replication coordinates (--slave-info)
-      kill_long_queries: true       # kill blocking queries before backup starts
-      kill_queries_timeout: 10      # kill queries running longer than N seconds
-      kill_query_type: select       # select | all
-      backup_copies: 2              # keep at most N local physical backups
-      # compression_algorithm: zstd # use with xtrabackup 8.0.34+ for faster compression
-      use_xtra_encryption: true
-      # Choose ONE key source:
-      xtra_key_file: /root/.secrets/xtrabackup.key   # recommended: 32-byte binary key
-      # xtra_key_env: XTRABACKUP_ENCRYPTION_KEY       # env var alternative
-      # xtra_key: "your-raw-key-here"                 # literal in config (least secure)
-      xtra_encrypt_algo: AES256
-      # gpg_recipient: "backup@example.com"
-      # extra_args: ["--parallel=4"]
-    encryption: xtrabackup_aes256
-    dedup: true
-    offsite_targets: ["s3-main", "rsync-dr"]
-
-  # Physical full backup from PXC node (with desync)
-  - name: pxc-physical-full-daily
-    instance: prod-pxc1
-    type: physical
-    schedule_hint: "30 1 * * *"
+    retention_days: 7
+    weekly_retention_weeks: 4
     backup_options:
       tool: xtrabackup
       xtrabackup_path: /usr/bin/xtrabackup
       backup_mode: full
       prepare_after_backup: true
       prepare_memory: 2G
-      save_replica_info: true
-      kill_long_queries: true
-      kill_queries_timeout: 10
-      kill_query_type: select
-      use_xtra_encryption: true
-      xtra_key_file: /root/.secrets/pxc-xtrabackup.key
-      xtra_encrypt_algo: AES256
-    encryption: xtrabackup_aes256
-    dedup: true
-    offsite_targets: ["s3-main"]
-
-  # Physical incremental backup (every 4h); runs a full when last full is >= 7 days old
-  - name: physical-incremental-4h
-    instance: prod-mysql1
-    type: physical
-    schedule_hint: "0 */4 * * *"
-    backup_options:
-      tool: xtrabackup
-      xtrabackup_path: /usr/bin/xtrabackup
-      backup_mode: incremental      # uses previous full as incremental base
-      full_backup_cycle: weekly     # daily | weekly | 1–7 (days); force full at this interval
-      prepare_after_backup: false
-      save_replica_info: true
+      defaults_file: /root/.config/mysql-backup/xtrabackup.cnf  # xtrabackup reads credentials from here
       use_xtra_encryption: true
       xtra_key_file: /root/.secrets/xtrabackup.key
       xtra_encrypt_algo: AES256
+      kill_long_queries: true
+      kill_queries_timeout: 10
+      backup_copies: 3
     encryption: xtrabackup_aes256
     dedup: true
-    offsite_targets: ["s3-main"]
+    offsite_targets: ["s3-main", "rsync-dr"]
 
-  # Binlog backup every 5 minutes
-  - name: binlog-continuous
+  - name: binlog-5min
     instance: prod-mysql1
     type: binlog
     schedule_hint: "*/5 * * * *"
     backup_options:
       mysqlbinlog_path: /usr/bin/mysqlbinlog
-      binlog_file: mysql-bin.000001 # only required on the very first run
-      binlog_log_prefix: mysql-bin  # prefix used in error messages to guide bootstrap
-      binlog_retention_days: 30     # separate retention for binlogs (overrides global)
-      insecure_connection: false    # set true to disable TLS on trusted internal networks
-      min_free_disk_pct: 5.0        # abort binlog backup if free disk drops below this %
-      # gpg_recipient: "backup@example.com"
-    encryption: null
-    dedup: false
+      binlog_file: binlog.000001    # first run only — check actual name with: SHOW BINARY LOGS;
+      binlog_retention_days: 30
+      min_free_disk_pct: 5.0
     offsite_targets: ["s3-main"]
 
 storage:
@@ -335,7 +288,6 @@ storage:
     type: rsync
     options:
       target: backup@dr-host:/data/mysql-backups
-      # ssh_user: backup
       # ssh_key: /home/backup/.ssh/id_rsa
       # options: "-z"
 
@@ -351,337 +303,92 @@ storage:
       container: mysql-backups
       account_name: myazurestorageaccount
       destination_path: prod/
-      # sas_token: "sp=rw&st=..."        # or set AZURE_STORAGE_SAS_TOKEN env var
-      # connection_string: "DefaultEndpoints..."  # or set AZURE_STORAGE_CONNECTION_STRING
+      # sas_token: "sp=rw&st=..."
 ```
 
-#### Instance config reference
+---
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `name` | *(required)* | Unique identifier for the instance |
-| `host` | `localhost` | MySQL host |
-| `port` | `3306` | MySQL port |
-| `user` | `root` | MySQL user |
-| `password_env` | *(none)* | Environment variable holding the password (recommended over `password`) |
-| `socket` | *(none)* | Unix socket path (overrides host/port) |
-| `pxc` | `false` | Mark as Percona XtraDB Cluster node |
-| `pxc_desync` | `false` | Desync node from cluster during backup |
-| `pxc_cluster_name` | *(none)* | Cluster name (informational) |
-| `replica_only` | `false` | Skip backup if the instance is not currently running as an active replica |
-| `read_only_only` | `false` | Skip backup if `read_only` or `super_read_only` is not enabled |
+## 5. Running backups
 
-#### Physical backup `backup_options` reference
+### Validate config and run pre-checks
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `tool` | `xtrabackup` | `xtrabackup` or `mariadb-backup` |
-| `xtrabackup_path` | *(from PATH)* | Full path to `xtrabackup` binary |
-| `mariadb_backup_path` | *(from PATH)* | Full path to `mariadb-backup` binary |
-| `backup_mode` | `full` | `full` or `incremental` |
-| `full_backup_cycle` | *(none)* | `daily`, `weekly`, or an integer day count — force a full backup at this interval when `backup_mode: incremental` |
-| `prepare_after_backup` | `true` | Run `--prepare` immediately after backup |
-| `prepare_memory` | *(none)* | Memory to use during `--prepare` (e.g. `2G`) |
-| `verify_after_backup` | `false` | Run `--prepare --export` as a post-backup verification step |
-| `save_replica_info` | `false` | Add `--slave-info` to save replication coordinates |
-| `kill_long_queries` | `false` | Kill long-running queries before backup starts |
-| `kill_queries_timeout` | `10` | Kill queries running longer than N seconds |
-| `kill_query_type` | `select` | `select` (only SELECTs) or `all` (any non-replication query) |
-| `backup_copies` | `0` (unlimited) | Keep at most N local physical backup directories |
-| `compression_algorithm` | *(none)* | Compression algorithm passed as `--compress-algorithm` (e.g. `zstd` for xtrabackup ≥ 8.0.34) |
-| `use_xtra_encryption` | `false` | Enable built-in AES-256 encryption |
-| `xtra_key_file` | *(none)* | Path to 32-byte binary key file (recommended) |
-| `xtra_key_env` | `XTRABACKUP_ENCRYPTION_KEY` | Env var holding the encryption key |
-| `xtra_key` | *(none)* | Literal key string in config (least secure) |
-| `xtra_encrypt_algo` | `AES256` | Encryption algorithm |
-| `gpg_recipient` | *(none)* | GPG recipient email; if set, directory is tarred and GPG-encrypted after backup |
-| `extra_args` | `[]` | Additional arguments passed verbatim to `xtrabackup` |
-
-#### Logical backup `backup_options` reference
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `mydumper_path` | `/usr/bin/mydumper` | Full path to `mydumper` binary |
-| `threads` | `4` | Number of parallel dump threads |
-| `chunk_filesize` | `64` | Split table files at this size (MB) |
-| `rows` | `50000` | Rows per chunk |
-| `compress` | `true` | Compress output with mydumper's built-in compression |
-| `dump_triggers` | `false` | Include stored triggers in the dump |
-| `less_locking` | `false` | Use `--less-locking` to reduce metadata lock hold time |
-| `use_numa` | `false` | Pass `--use-numa` (requires `numactl`) |
-| `ftwrl_guardian` | `false` | Pass `--use-ftwrl-guardian` to abort if the global lock takes too long |
-| `incremental_since_days` | *(none)* | Only dump tables modified in the last N days (`--updated-since`) |
-| `extra_args` | `[]` | Additional arguments passed verbatim to `mydumper` |
-
-#### Binlog backup `backup_options` reference
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `mysqlbinlog_path` | `/usr/bin/mysqlbinlog` | Full path to `mysqlbinlog` binary |
-| `binlog_file` | *(none)* | Starting binlog file name — **required on the first run** |
-| `binlog_log_prefix` | `mysql-bin` | Binlog filename prefix (used in error messages) |
-| `binlog_retention_days` | *(uses job/global)* | Retention for binlog backups, independent of other job types |
-| `insecure_connection` | `false` | Disable TLS (`--ssl-mode=DISABLED`) for internal trusted networks |
-| `min_free_disk_pct` | `5.0` | Abort if free disk on the backup volume drops below this percentage |
-| `gpg_recipient` | *(none)* | GPG recipient email for per-file encryption |
-
-#### Bootstrapping the binlog puller on a new host
-
-On first setup (or after a long gap), the oldest binlog file on the primary may no longer exist. Check which file is the oldest available:
+Always run `mysql_backup_precheck` before enabling cron to confirm binaries, connectivity, directories, and permissions are all in order:
 
 ```bash
-mysql -h <primary_ip> -u backup -p -e "SHOW BINARY LOGS;" | head -n 2
-# Example output:
-# Log_name          File_size
-# mysql-bin.004884  123456
-```
+export MYSQL_BACKUP_PASSWORD='your_password'
+source /root/mysql-backup-venv/bin/activate
 
-Set `binlog_file: mysql-bin.004884` (the oldest available file) in the job's `backup_options` and run the job once. On subsequent runs the driver reads its stored position state and the `binlog_file` setting is ignored.
-
-2. **Create the MySQL backup user**
-
-On each MySQL server, create a dedicated backup user with the required privileges.
-For MySQL 8+ with `xtrabackup`, you **must** grant `BACKUP_ADMIN` as well:
-
-```sql
-CREATE USER IF NOT EXISTS 'backup'@'localhost' IDENTIFIED BY 'backup_pass';
-GRANT BACKUP_ADMIN, RELOAD, LOCK TABLES, PROCESS, REPLICATION CLIENT, SELECT, SHOW VIEW
-  ON *.* TO 'backup'@'localhost';
-FLUSH PRIVILEGES;
-```
-
-3. **Provide MySQL credentials and (optionally) encryption keys**
-
-On the backup host, as root (or inside the root venv), set the environment variables referenced by your config (e.g. `password_env` and
-encryption keys). For a simple setup:
-
-```bash
-export MYSQL_BACKUP_PASSWORD='backup_pass'
-# export XTRABACKUP_ENCRYPTION_KEY='...'   # if using xtrabackup encryption via xtra_key_env
-```
-
-Alternatively (recommended), configure xtrabackup encryption with a **root-readable key file** in your job's `backup_options`:
-
-```yaml
-backup_options:
-  use_xtra_encryption: true
-  xtra_key_file: /root/.secrets/xtrabackup.key
-  xtra_encrypt_algo: AES256
-```
-
-#### GPG key management
-
-Generate a new GPG key pair for backup encryption (run as root on the backup host):
-
-```bash
-gpg --full-generate-key
-# Choose: (1) RSA and RSA, keysize 4096, no expiry
-# Real name: Backup Encryption
-# Email address: backup.encryption@example.com
-```
-
-Export both keys for safe storage (e.g. in a secrets vault):
-
-```bash
-gpg --armor --export backup.encryption@example.com > public.key
-gpg --armor --export-secret-key backup.encryption@example.com > private.key
-# Save the passphrase used during key creation alongside these files
-```
-
-To **import an existing key pair** on a new backup host:
-
-```bash
-gpg --import private.key   # prompts for passphrase
-gpg --import public.key
-gpg --list-keys            # verify import
-```
-
-To create a suitable AES-256 key file for xtrabackup (expects **raw 32‑byte key**):
-
-```bash
-umask 077
-openssl rand -out /root/.secrets/xtrabackup.key 32
-chmod 600 /root/.secrets/xtrabackup.key
-wc -c /root/.secrets/xtrabackup.key   # should print: 32 /root/.secrets/xtrabackup.key
-```
-
-Or (less secure) set the literal key in config:
-
-```yaml
-backup_options:
-  use_xtra_encryption: true
-  xtra_key: "your-key-material-here"
-  xtra_encrypt_algo: AES256
-```
-
-4. **Validate configuration (optional but recommended)**
-
-You can validate your configuration without running any backups:
-
-```bash
-mysql_backup_driver --validate-config
-```
-
-For a quick smoke test (validate + show number of jobs detected):
-
-```bash
-mysql_backup_driver --self-test
-```
-
-### Running backups
-
-1. **Run pre-checks (recommended before enabling cron)**
-
-Run comprehensive pre-checks against your config and target MySQL instances to ensure
-all binaries, permissions, and directories are in place before scheduling backups:
-
-- Pre-check all jobs:
-
-```bash
+# Check all jobs:
 mysql_backup_precheck
-```
 
-- Pre-check a single job:
-
-```bash
+# Check one job:
 mysql_backup_precheck --job logical-daily
-```
 
-- Pre-check all jobs for a specific instance:
-
-```bash
+# Check all jobs for one instance:
 mysql_backup_precheck --instance prod-mysql1
 ```
 
-If any issue is found (missing binary, bad connectivity, missing env vars for encryption keys, etc.),
-`mysql_backup_precheck` will exit non‑zero and list the problems.
-
-If physical backups fail with errors like:
-
-- `Access denied; you need (at least one of) the BACKUP_ADMIN privilege(s) for this operation`
-- `encryption: unable to set libgcrypt cipher key - ... Invalid key length`
-- `Can't create/write to file '.../xtrabackup_logfile.xbcrypt' (OS errno 17 - File exists)`
-
-then:
-
-- Ensure the backup user has `BACKUP_ADMIN` as shown above.
-- Ensure the xtrabackup key file is a **32‑byte binary file** (see the `openssl rand -out ... 32` example).
-- Remove any partial backup directory and rerun, e.g.:
-
-  ```bash
-  rm -rf /var/backups/mysql/<instance>/physical/<timestamp-dir>
-  ```
-
-2. **List and run jobs**
-
-- List jobs:
+### Driver CLI reference
 
 ```bash
+# List all configured jobs
 mysql_backup_driver --list-jobs
-```
 
-- Run a specific job (e.g. logical daily backup):
+# Validate config file syntax only (no MySQL connection)
+mysql_backup_driver --validate-config
 
-```bash
+# Connectivity + environment smoke test
+mysql_backup_driver --self-test
+
+# Run a specific job
 mysql_backup_driver --job logical-daily
-```
 
-- Run only physical or binlog jobs by type:
-
-```bash
+# Run all jobs of a given type
 mysql_backup_driver --type physical
 mysql_backup_driver --type binlog
-```
 
-- See what would run without executing (dry run):
-
-```bash
+# Dry run — shows what would happen without writing anything
 mysql_backup_driver --job physical-daily --dry-run
+
+# Use a non-default config file
+mysql_backup_driver --config /etc/mysql-backup/prod.yml
+
+# Use a non-default lock file (for multiple configs on same host)
+mysql_backup_driver --config prod.yml --lock-file /tmp/prod.lock
 ```
 
-### Running multiple configs on the same host
+---
 
-If you manage several MySQL instances from a single backup server, run each config with its own lock file:
+## 6. Scheduling with cron
 
-```bash
-mysql_backup_driver --config /root/.config/mysql-backup/prod-mysql1.yml --lock-file /tmp/backup-prod-mysql1.lock
-mysql_backup_driver --config /root/.config/mysql-backup/prod-mysql2.yml --lock-file /tmp/backup-prod-mysql2.lock
+Edit the root crontab (`crontab -e` as root) or drop a file in `/etc/cron.d/`:
+
+```cron
+# /etc/cron.d/mysql-backup
+SHELL=/bin/bash
+MYSQL_BACKUP_PASSWORD=your_password_here
+
+# Logical backup at 2am daily
+0 2 * * * root source /root/mysql-backup-venv/bin/activate && mysql_backup_driver --job logical-daily >> /var/log/mysql-backup/cron.log 2>&1
+
+# Physical backup at 1am daily
+0 1 * * * root source /root/mysql-backup-venv/bin/activate && mysql_backup_driver --job physical-daily >> /var/log/mysql-backup/cron.log 2>&1
+
+# Binlog every 5 minutes
+*/5 * * * * root source /root/mysql-backup-venv/bin/activate && mysql_backup_driver --job binlog-5min >> /var/log/mysql-backup/cron.log 2>&1
 ```
 
-Without `--lock-file` the driver defaults to `/tmp/mysql-backup-driver.lock`, so all jobs share one lock and cannot run concurrently.
+Or using full paths (simpler in cron — avoids virtualenv activation issues):
 
-### Graceful stop
+```cron
+MYSQL_BACKUP_PASSWORD=your_password_here
 
-To stop the driver cleanly between jobs (e.g. after a config change) without killing a running backup, create the file specified in `graceful_stop_file`:
-
-```bash
-# Create the sentinel file
-touch /root/.config/mysql-backup/GRACEFUL_STOP
-
-# The driver will finish its current job and then exit.
-# Remove the file after restart so it does not block the next cron run.
-sleep 60 && rm /root/.config/mysql-backup/GRACEFUL_STOP
+0 2 * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --job logical-daily >> /var/log/mysql-backup/cron.log 2>&1
+0 1 * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --job physical-daily >> /var/log/mysql-backup/cron.log 2>&1
+*/5 * * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --job binlog-5min >> /var/log/mysql-backup/cron.log 2>&1
 ```
 
-You can combine both into one line:
-
-```bash
-(touch /root/.config/mysql-backup/GRACEFUL_STOP && sleep 60 && rm /root/.config/mysql-backup/GRACEFUL_STOP) &
-```
-
-### Monitoring a running backup
-
-Check whether the driver is running and see all child processes (xtrabackup, mydumper, mysqlbinlog, etc.):
-
-```bash
-pgrep -f mysql_backup_driver | xargs ps -opgrp --no-headers \
-  | sort | uniq \
-  | while read -r grp; do
-      pgrep -g "$grp" | xargs ps -o pid,ppid,user,stime,etime,cmd -f
-    done
-```
-
-Check the log files:
-
-```bash
-cd /var/log/mysql-backup
-tail -f backup_driver.log
-```
-
-### Notes for MySQL 8 (auth and permissions)
-
-- For MySQL 8 default `caching_sha2_password` auth, the Python client requires the `cryptography` package
-  (already included as a dependency). Ensure it is installed, or switch the backup user to `mysql_native_password`
-  if you prefer.
-- Logical backups with `mydumper` may require `SHOW VIEW` on schemas such as `sys`. Either:
-  - Grant `SHOW VIEW` to the backup user, e.g.:
-    ```sql
-    GRANT SHOW VIEW ON *.* TO 'backup'@'localhost';
-    FLUSH PRIVILEGES;
-    ```
-  - Or configure `mydumper` to exclude schemas like `sys` via `backup_options.extra_args`.
-
-### Cron example (VM/bare metal)
-
-Single instance:
-
-```bash
-0 2 * * * /root/mysql-backup-venv/bin/mysql_backup_driver --job logical-daily >> /var/log/mysql-backup/cron.log 2>&1
-```
-
-Multiple configs on the same host (use separate lock files):
-
-```bash
-0 1 * * * root /root/mysql-backup-venv/bin/mysql_backup_driver \
-  --config /root/.config/mysql-backup/prod-mysql1.yml \
-  --lock-file /tmp/backup-prod1.lock >> /var/log/mysql-backup/prod1-cron.log 2>&1
-
-0 1 * * * root /root/mysql-backup-venv/bin/mysql_backup_driver \
-  --config /root/.config/mysql-backup/prod-mysql2.yml \
-  --lock-file /tmp/backup-prod2.lock >> /var/log/mysql-backup/prod2-cron.log 2>&1
-```
-
-### Kubernetes CronJob example
+### Kubernetes CronJob
 
 ```yaml
 apiVersion: batch/v1
@@ -698,13 +405,619 @@ spec:
             - name: backup
               image: your-registry/mysql-backup:latest
               args: ["mysql_backup_driver", "--config", "/etc/backup/config.yml", "--job", "logical-daily"]
+              env:
+                - name: MYSQL_BACKUP_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysql-backup-secret
+                      key: password
               volumeMounts:
                 - name: config
                   mountPath: /etc/backup
+                - name: backup-storage
+                  mountPath: /var/backups/mysql
           restartPolicy: OnFailure
           volumes:
             - name: config
               configMap:
                 name: mysql-backup-config
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: mysql-backup-pvc
 ```
 
+---
+
+## 7. How-to guides
+
+### How to set up physical backups with AES-256 encryption
+
+Physical backups can be encrypted with xtrabackup's built-in AES-256. The encrypted backup is useless without the key, so store it securely.
+
+**Step 1 — Generate the key**
+
+xtrabackup expects a **raw 32-byte binary key** file (not hex-encoded):
+
+```bash
+mkdir -p /root/.secrets
+openssl rand -out /root/.secrets/xtrabackup.key 32
+chmod 600 /root/.secrets/xtrabackup.key
+# Verify: should print "32 /root/.secrets/xtrabackup.key"
+wc -c /root/.secrets/xtrabackup.key
+```
+
+> **Common mistake:** `openssl rand -hex 32` generates a 64-character hex string, not a 32-byte binary key. xtrabackup will reject it with `Invalid key length`. Always use `openssl rand -out <file> 32`.
+
+**Step 2 — Create an xtrabackup credentials file**
+
+Instead of passing `--password=` on the command line (which appears in `ps` output), store xtrabackup credentials in a dedicated config file:
+
+```bash
+cat > /root/.config/mysql-backup/xtrabackup.cnf << 'EOF'
+[xtrabackup]
+user=backup
+password=your_password_here
+host=localhost
+port=3306
+EOF
+chmod 600 /root/.config/mysql-backup/xtrabackup.cnf
+```
+
+**Step 3 — Reference both in your job config**
+
+```yaml
+jobs:
+  - name: physical-daily
+    instance: prod-mysql1
+    type: physical
+    backup_options:
+      tool: xtrabackup
+      xtrabackup_path: /usr/bin/xtrabackup
+      backup_mode: full
+      prepare_after_backup: true
+      defaults_file: /root/.config/mysql-backup/xtrabackup.cnf
+      use_xtra_encryption: true
+      xtra_key_file: /root/.secrets/xtrabackup.key
+      xtra_encrypt_algo: AES256
+    encryption: xtrabackup_aes256
+```
+
+**How prepare works with encryption**
+
+When `prepare_after_backup: true`, the driver automatically:
+1. Runs `xtrabackup --decrypt=AES256 --encrypt-key-file=... --target-dir=...` to decrypt the `.xbcrypt` files in-place
+2. Runs `xtrabackup --prepare --target-dir=...` to apply the redo log and make the backup consistent
+
+This is a two-step process because xtrabackup cannot apply the redo log to encrypted files directly. Both steps happen automatically — you do not need to do anything manually.
+
+---
+
+### How to set up binlog backups
+
+Binlog backups stream binlog events from MySQL using `mysqlbinlog --read-from-remote-server`. They provide point-in-time recovery capability between physical/logical backups.
+
+**Step 1 — Check binary logging is enabled**
+
+```sql
+SHOW VARIABLES LIKE 'log_bin';
+-- Value should be ON
+```
+
+If it is OFF, enable it in `/etc/mysql/mysql.conf.d/mysqld.cnf`:
+
+```ini
+[mysqld]
+log_bin = binlog
+server-id = 1
+```
+
+Then restart MySQL.
+
+**Step 2 — Check the current binlog filename**
+
+MySQL 8.0 uses `binlog.XXXXXX` as the default prefix (not `mysql-bin`). Check what your server uses:
+
+```sql
+SHOW BINARY LOGS;
+-- Example output:
+-- binlog.000033  201
+-- binlog.000034  201
+-- binlog.000068  157   ← this is the current file
+```
+
+Use the **oldest available** file as the starting point for your first run.
+
+**Step 3 — Configure the job**
+
+```yaml
+jobs:
+  - name: binlog-5min
+    instance: prod-mysql1
+    type: binlog
+    schedule_hint: "*/5 * * * *"
+    backup_options:
+      mysqlbinlog_path: /usr/bin/mysqlbinlog
+      binlog_file: binlog.000033    # oldest available file — first run only
+      binlog_retention_days: 30
+      min_free_disk_pct: 5.0
+```
+
+After the first successful run, the driver saves its position to `/tmp/mysql-backup/binlog_state_<jobname>.txt` and uses that on every subsequent run. The `binlog_file` config setting is ignored once state exists.
+
+**Step 4 — Ensure the backup user has REPLICATION SLAVE**
+
+```sql
+GRANT REPLICATION SLAVE ON *.* TO 'backup'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+This is required for `mysqlbinlog --read-from-remote-server`. Without it you will get:
+```
+ERROR: Got error reading packet from server: Access denied; you need (at least one of) the REPLICATION SLAVE privilege(s)
+```
+
+---
+
+### How to restore a logical backup
+
+Logical backups are created by `mydumper` and restored with `myloader`.
+
+**Install myloader** (same package as mydumper):
+
+```bash
+# Ubuntu/Debian
+apt-get install mydumper
+
+# RHEL/Alma/Rocky
+dnf install mydumper
+```
+
+**Restore a full backup to the same or a different server:**
+
+```bash
+# Find the backup directory
+ls /var/backups/mysql/<instance>/logical/
+# e.g. 20260322-020000
+
+# Restore all databases (will overwrite existing data)
+myloader \
+  --host=localhost \
+  --port=3306 \
+  --user=root \
+  --password=your_root_password \
+  --directory=/var/backups/mysql/prod-mysql1/logical/20260322-020000 \
+  --overwrite-tables \
+  --threads=4 \
+  --verbose=3
+```
+
+**Restore a single database:**
+
+```bash
+myloader \
+  --host=localhost \
+  --port=3306 \
+  --user=root \
+  --password=your_root_password \
+  --directory=/var/backups/mysql/prod-mysql1/logical/20260322-020000 \
+  --source-db=myapp \
+  --database=myapp_restored \
+  --overwrite-tables \
+  --threads=4
+```
+
+> The backup directory stores one file per table chunk — restoring a single table is possible by copying only the relevant files into a new directory and pointing `myloader` at it.
+
+---
+
+### How to restore a physical backup
+
+Physical backups taken with xtrabackup can be restored by copying the data directory back to MySQL.
+
+> **Prerequisites:** MySQL must be stopped before restoring. The data directory must be empty (or you must be willing to overwrite it).
+
+**Step 1 — Locate the prepared backup**
+
+After a successful job, the backup directory contains a fully prepared (apply-log completed) copy of the MySQL data directory:
+
+```bash
+ls /var/backups/mysql/<instance>/physical/
+# e.g. 20260322-010000
+```
+
+If the backup was encrypted, the driver has already decrypted and prepared it automatically (decrypt → prepare happens immediately after backup). The directory is ready to restore.
+
+**Step 2 — Stop MySQL**
+
+```bash
+systemctl stop mysql
+```
+
+**Step 3 — Move or clear the data directory**
+
+```bash
+# Option A: move existing data dir out of the way
+mv /var/lib/mysql /var/lib/mysql.bak
+
+# Option B: wipe it (destructive — no recovery possible)
+rm -rf /var/lib/mysql/*
+```
+
+**Step 4 — Copy the backup into place**
+
+```bash
+xtrabackup \
+  --copy-back \
+  --target-dir=/var/backups/mysql/prod-mysql1/physical/20260322-010000 \
+  --datadir=/var/lib/mysql
+```
+
+**Step 5 — Fix ownership and start MySQL**
+
+```bash
+chown -R mysql:mysql /var/lib/mysql
+systemctl start mysql
+```
+
+**Step 6 — Verify**
+
+```bash
+mysql -u root -p -e "SHOW DATABASES;"
+```
+
+---
+
+### How to do point-in-time recovery using binlogs
+
+Use this when you need to recover to a specific time (e.g. just before a bad `DROP TABLE`), combining a physical (or logical) backup with binlog backups.
+
+**Step 1 — Restore the most recent physical backup** before the incident (see [How to restore a physical backup](#how-to-restore-a-physical-backup)).
+
+**Step 2 — Find the binlog position in the backup**
+
+After `--copy-back`, the backup contains `xtrabackup_binlog_info` with the exact binlog position the backup was taken at:
+
+```bash
+cat /var/backups/mysql/prod-mysql1/physical/20260322-010000/xtrabackup_binlog_info
+# binlog.000065   157
+```
+
+**Step 3 — Replay binlogs up to the incident**
+
+Collect all binlog backup files from that position up to just before the incident. Binlog backups are stored in:
+
+```
+/var/backups/mysql/<instance>/binlog/<timestamp>/binlog.sql
+```
+
+Find the right time range:
+
+```bash
+ls -lt /var/backups/mysql/prod-mysql1/binlog/
+```
+
+Use `mysqlbinlog` to replay, stopping just before the destructive event:
+
+```bash
+# Replay from backup position to a specific datetime (exclude the DROP TABLE at 14:32:00)
+mysqlbinlog \
+  --start-position=157 \
+  --stop-datetime="2026-03-22 14:31:59" \
+  /var/backups/mysql/prod-mysql1/binlog/20260322-140000/binlog.sql \
+  /var/backups/mysql/prod-mysql1/binlog/20260322-143000/binlog.sql \
+  | mysql -u root -p
+```
+
+Or stop at a specific binlog position (more precise):
+
+```bash
+mysqlbinlog \
+  --start-position=157 \
+  --stop-position=98765 \
+  /var/backups/mysql/prod-mysql1/binlog/20260322-140000/binlog.sql \
+  | mysql -u root -p
+```
+
+---
+
+### How to verify a physical backup without restoring
+
+Use xtrabackup's `--prepare --export` to perform a read-only sanity check on a backup without actually restoring it. This confirms the InnoDB pages are consistent.
+
+```bash
+BACKUP_DIR=/var/backups/mysql/prod-mysql1/physical/20260322-010000
+
+xtrabackup --prepare --export --target-dir="$BACKUP_DIR"
+# Should end with: "completed OK!"
+```
+
+You can also enable this check automatically after every backup by setting `verify_after_backup: true` in the job's `backup_options`.
+
+---
+
+### How to upgrade the tool
+
+```bash
+sudo -i
+source /root/mysql-backup-venv/bin/activate
+
+# Upgrade to latest main branch
+pip install --force-reinstall --no-cache-dir "git+https://github.com/Mughees52/mysql-backup.git@main"
+
+# Verify the new version is active
+mysql_backup_driver --validate-config
+```
+
+To upgrade from a local source checkout:
+
+```bash
+source /root/mysql-backup-venv/bin/activate
+pip install --force-reinstall /path/to/mysql-backup-source/
+```
+
+---
+
+### How to run multiple configs on the same host
+
+If one backup host manages several MySQL instances, use a separate config file and lock file for each:
+
+```bash
+mysql_backup_driver \
+  --config /root/.config/mysql-backup/prod-mysql1.yml \
+  --lock-file /tmp/backup-prod-mysql1.lock
+
+mysql_backup_driver \
+  --config /root/.config/mysql-backup/prod-mysql2.yml \
+  --lock-file /tmp/backup-prod-mysql2.lock
+```
+
+Without `--lock-file` all invocations share the default `/tmp/mysql-backup-driver.lock` and cannot run concurrently.
+
+---
+
+### How to use graceful stop
+
+To stop the driver cleanly between jobs (e.g. before a maintenance window) without killing a running backup, create the sentinel file configured in `graceful_stop_file`:
+
+```bash
+# Tell the driver to stop after its current job finishes
+touch /root/.config/mysql-backup/GRACEFUL_STOP
+
+# The driver exits cleanly. Remove the file before the next scheduled run.
+rm /root/.config/mysql-backup/GRACEFUL_STOP
+```
+
+To auto-remove after 5 minutes:
+
+```bash
+touch /root/.config/mysql-backup/GRACEFUL_STOP
+(sleep 300 && rm -f /root/.config/mysql-backup/GRACEFUL_STOP) &
+```
+
+---
+
+## 8. Configuration reference
+
+### Global config
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `backup_root` | *(required)* | Root directory for all backup data |
+| `log_dir` | *(required)* | Directory for log files |
+| `tmp_dir` | `/tmp/mysql-backup` | Temp directory (binlog state files, etc.) |
+| `default_encryption` | `none` | `none` \| `xtrabackup_aes256` \| `gpg` |
+| `default_retention_days` | `7` | Daily backup retention in days |
+| `weekly_retention_weeks` | `4` | Weekly retention (one backup per calendar week, beyond the daily window) |
+| `default_timeout_seconds` | `3600` | Per-job wall-clock timeout |
+| `disk_space_factor` | `2.5` | Required free-space multiplier relative to estimated DB size |
+| `debug` | `false` | Verbose debug logging |
+| `graceful_stop_file` | *(none)* | Path to sentinel file — driver stops cleanly after current job if file exists |
+
+### Instance config
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `name` | *(required)* | Unique identifier |
+| `host` | `localhost` | MySQL host |
+| `port` | `3306` | MySQL port |
+| `user` | `root` | MySQL user |
+| `password_env` | *(none)* | Env var holding the password (recommended) |
+| `socket` | *(none)* | Unix socket path (overrides host/port) |
+| `pxc` | `false` | Mark as a PXC node |
+| `pxc_desync` | `false` | Desync from cluster during backup |
+| `pxc_cluster_name` | *(none)* | Cluster name (informational) |
+| `replica_only` | `false` | Skip backup if instance is not an active replica |
+| `read_only_only` | `false` | Skip backup if `read_only` / `super_read_only` is not ON |
+
+### Physical backup options
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `tool` | `xtrabackup` | `xtrabackup` or `mariadb-backup` |
+| `xtrabackup_path` | *(from PATH)* | Full path to `xtrabackup` |
+| `mariadb_backup_path` | *(from PATH)* | Full path to `mariadb-backup` |
+| `backup_mode` | `full` | `full` or `incremental` |
+| `full_backup_cycle` | *(none)* | Force a full at this interval when `backup_mode: incremental` — `daily`, `weekly`, or integer days |
+| `prepare_after_backup` | `true` | Run decrypt + prepare after backup |
+| `prepare_memory` | *(none)* | Memory for `--prepare` (e.g. `2G`) |
+| `verify_after_backup` | `false` | Run `--prepare --export` as a post-backup sanity check |
+| `defaults_file` | *(none)* | Path to a `[xtrabackup]` credentials file; when set, xtrabackup reads user/password/host/port from it instead of the command line |
+| `save_replica_info` | `false` | Pass `--slave-info` to save replication coordinates |
+| `kill_long_queries` | `false` | Kill long-running queries before backup |
+| `kill_queries_timeout` | `10` | Kill queries running longer than N seconds |
+| `kill_query_type` | `select` | `select` or `all` |
+| `backup_copies` | `0` (unlimited) | Keep at most N local physical backup directories |
+| `compression_algorithm` | *(none)* | e.g. `zstd` (requires xtrabackup ≥ 8.0.34) |
+| `use_xtra_encryption` | `false` | Enable AES-256 encryption |
+| `xtra_key_file` | *(none)* | Path to 32-byte binary key file (**recommended**) |
+| `xtra_key_env` | `XTRABACKUP_ENCRYPTION_KEY` | Env var holding the key |
+| `xtra_key` | *(none)* | Literal key in config (least secure) |
+| `xtra_encrypt_algo` | `AES256` | Encryption algorithm |
+| `gpg_recipient` | *(none)* | GPG recipient email — tars and GPG-encrypts the directory after backup |
+| `extra_args` | `[]` | Extra args passed verbatim to xtrabackup |
+
+### Logical backup options
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mydumper_path` | `/usr/bin/mydumper` | Full path to `mydumper` |
+| `threads` | `4` | Parallel dump threads |
+| `chunk_filesize` | `64` | Split table files at this size (MB) |
+| `rows` | `50000` | Rows per chunk |
+| `compress` | `true` | mydumper built-in compression |
+| `dump_triggers` | `false` | Include stored triggers |
+| `less_locking` | `false` | `--less-locking` mode |
+| `use_numa` | `false` | `--use-numa` (requires `numactl`) |
+| `ftwrl_guardian` | `false` | Abort if FTWRL lock takes too long |
+| `incremental_since_days` | *(none)* | Only dump tables modified in last N days |
+| `extra_args` | `[]` | Extra args passed verbatim to mydumper |
+
+### Binlog backup options
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mysqlbinlog_path` | `/usr/bin/mysqlbinlog` | Full path to `mysqlbinlog` |
+| `binlog_file` | *(none)* | Starting binlog filename — **required on first run only** |
+| `binlog_log_prefix` | `mysql-bin` | Prefix used in error messages |
+| `binlog_retention_days` | *(uses job/global)* | Independent retention for binlog backups |
+| `insecure_connection` | `false` | `--ssl-mode=DISABLED` for trusted internal networks |
+| `min_free_disk_pct` | `5.0` | Abort if free disk on backup volume drops below this % |
+| `gpg_recipient` | *(none)* | GPG recipient email for per-file encryption |
+
+### Storage target options
+
+**S3:**
+
+| Key | Description |
+|-----|-------------|
+| `bucket` | S3 bucket name |
+| `prefix` | Key prefix (e.g. `prod/`) |
+| `storage_class` | e.g. `STANDARD_IA`, `GLACIER` |
+| `kms_key_id` | AWS KMS key ARN for server-side encryption |
+
+**rsync:**
+
+| Key | Description |
+|-----|-------------|
+| `target` | `user@host:/path` |
+| `ssh_key` | Path to SSH private key |
+| `options` | Extra rsync flags (e.g. `-z` for compression) |
+
+**GCS:**
+
+| Key | Description |
+|-----|-------------|
+| `bucket` | GCS bucket name |
+| `prefix` | Object prefix |
+
+**Azure Blob:**
+
+| Key | Description |
+|-----|-------------|
+| `container` | Blob container name |
+| `account_name` | Storage account name |
+| `destination_path` | Blob path prefix |
+| `sas_token` | SAS token (or set `AZURE_STORAGE_SAS_TOKEN` env var) |
+| `connection_string` | Connection string (or set `AZURE_STORAGE_CONNECTION_STRING`) |
+
+---
+
+## 9. Troubleshooting
+
+### Physical backup: `Access denied; you need BACKUP_ADMIN`
+
+The backup user is missing the `BACKUP_ADMIN` privilege required by xtrabackup 8.x on MySQL 8:
+
+```sql
+GRANT BACKUP_ADMIN ON *.* TO 'backup'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+### Physical backup: `Invalid key length`
+
+The xtrabackup key file was generated with `openssl rand -hex 32` (64 ASCII characters) instead of `openssl rand -out <file> 32` (32 binary bytes). Regenerate it:
+
+```bash
+openssl rand -out /root/.secrets/xtrabackup.key 32
+chmod 600 /root/.secrets/xtrabackup.key
+wc -c /root/.secrets/xtrabackup.key   # must print: 32
+```
+
+### Physical backup: `cannot open ./xtrabackup_info` during prepare
+
+This happens if you try to run `xtrabackup --prepare` directly on an encrypted backup without decrypting first. The driver handles this automatically (decrypt then prepare). If running xtrabackup manually, decrypt first:
+
+```bash
+xtrabackup --decrypt=AES256 --encrypt-key-file=/root/.secrets/xtrabackup.key \
+  --target-dir=/var/backups/mysql/instance/physical/20260322-010000
+
+xtrabackup --prepare \
+  --target-dir=/var/backups/mysql/instance/physical/20260322-010000
+```
+
+### Physical backup fails and leaves a partial directory
+
+Remove the partial directory before retrying:
+
+```bash
+rm -rf /var/backups/mysql/<instance>/physical/<timestamp>
+mysql_backup_driver --job physical-daily
+```
+
+### Binlog backup: `Access denied; you need REPLICATION SLAVE`
+
+```sql
+GRANT REPLICATION SLAVE ON *.* TO 'backup'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+### Binlog backup: wrong filename on first run
+
+MySQL 8.0 defaults to the prefix `binlog` (e.g. `binlog.000001`), not `mysql-bin`. Check the actual filenames:
+
+```sql
+SHOW BINARY LOGS;
+```
+
+Set `binlog_file` to the oldest available file in the output.
+
+### `Insufficient disk space` error
+
+The backup volume does not have enough free space. The driver requires `2.5 × (estimated DB size) + 512 MB` free by default. Either:
+
+- Free up space on the backup volume
+- Reduce `disk_space_factor` in global config (not recommended below 1.5)
+- Expand the backup volume
+
+Check current usage:
+
+```bash
+df -h /var/backups/mysql
+du -sh /var/lib/mysql
+```
+
+### Log files
+
+```bash
+# Driver log
+tail -f /var/log/mysql-backup/mysql_backup.log
+
+# Precheck log
+tail -f /var/log/mysql-backup/mysql_backup_precheck.log
+```
+
+### MySQL 8: `caching_sha2_password` auth errors
+
+The Python `pymysql` client requires the `cryptography` package for `caching_sha2_password` (MySQL 8 default). It is included as a dependency. If you still see auth errors, verify it is installed in the venv:
+
+```bash
+source /root/mysql-backup-venv/bin/activate
+python3 -c "import cryptography; print(cryptography.__version__)"
+```
+
+Or switch the backup user to `mysql_native_password`:
+
+```sql
+ALTER USER 'backup'@'localhost' IDENTIFIED WITH mysql_native_password BY 'your_password';
+FLUSH PRIVILEGES;
+```
