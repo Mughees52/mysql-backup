@@ -158,6 +158,10 @@ Key `backup_options` fields by type:
 | logical | `mydumper_path`, `threads`, `compress`, `dump_triggers`, `less_locking` |
 | binlog | `mysqlbinlog_path`, `binlog_file` (first run only), `min_free_disk_pct`, `binlog_retention_days` |
 
+## Testing
+
+`TESTING.md` contains the complete end-to-end test record with real command output captured from `mysql-box`. Run the same sequence after any significant change to confirm nothing regressed. The 13 tests cover: config validation, self-test, list-jobs, precheck, dry-run, logical backup, physical backup (encrypt+decrypt+prepare), binlog backup, retention, lock file, graceful stop, and `--run-scheduled` schedule dispatch.
+
 ## Documentation Rule
 
-After every successful code change and test, update **both** `README.md` (end-user docs) and this `CLAUDE.md` (developer context) before considering the task complete.
+After every successful code change and test, update **`README.md`** (end-user docs), **`CLAUDE.md`** (developer context), and **`TESTING.md`** (test record) before considering the task complete.

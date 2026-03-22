@@ -11,6 +11,8 @@ Python 3 backup suite for MySQL/MariaDB providing:
 - **PXC support** — automatic desync/resync around physical backups on Percona XtraDB Cluster nodes
 - **Operational** — lock file (prevents concurrent runs), graceful stop, kill long-running queries before backup
 
+> **Test record:** `TESTING.md` contains the complete end-to-end test run with real command output captured from the live `mysql-box` deployment.
+
 ---
 
 ## Table of Contents
@@ -415,6 +417,8 @@ mysql_backup_driver --run-scheduled --dry-run
 mysql_backup_driver --list-jobs
 ```
 
+> **"No jobs selected"** in the log is **expected** when `--run-scheduled` is invoked at a time when no job's `schedule_hint` is due. This happens every minute where no schedule matches — for example, `binlog-5min` (`*/5 * * * *`) will show "No jobs selected" for four out of every five minutes.
+
 ### Multiple configs on the same host
 
 ```cron
@@ -661,7 +665,14 @@ ls /var/backups/mysql/<instance>/physical/
 # e.g. 20260322-010000
 ```
 
-If the backup was encrypted, the driver has already decrypted and prepared it automatically (decrypt → prepare happens immediately after backup). The directory is ready to restore.
+Confirm it is in the prepared state (required before restore):
+
+```bash
+cat /var/backups/mysql/<instance>/physical/20260322-010000/xtrabackup_checkpoints
+# backup_type = full-prepared   ← must say this, not "full-backuped"
+```
+
+**Note on `.xbcrypt` files:** If the backup was AES-256 encrypted, after the automatic decrypt step you will see both the decrypted data file (e.g. `binlog.000072`) and its original encrypted counterpart (`binlog.000072.xbcrypt`) in the same directory. This is expected — the decrypt step writes new plain files alongside the originals. The `--copy-back` command uses the plain data files and ignores the `.xbcrypt` files. The backup is ready to restore as-is.
 
 **Step 2 — Stop MySQL**
 
@@ -711,12 +722,14 @@ Use this when you need to recover to a specific time (e.g. just before a bad `DR
 
 **Step 2 — Find the binlog position in the backup**
 
-After `--copy-back`, the backup contains `xtrabackup_binlog_info` with the exact binlog position the backup was taken at:
+The backup directory contains `xtrabackup_binlog_info` with the exact binlog position recorded at backup time. Read it directly from the backup directory — you do not need to wait until after `--copy-back`:
 
 ```bash
 cat /var/backups/mysql/prod-mysql1/physical/20260322-010000/xtrabackup_binlog_info
-# binlog.000065   157
+# binlog.000072   157
 ```
+
+This tells you: start replaying binlogs from file `binlog.000072` at position `157`.
 
 **Step 3 — Replay binlogs up to the incident**
 
@@ -758,16 +771,27 @@ mysqlbinlog \
 
 ### How to verify a physical backup without restoring
 
-Use xtrabackup's `--prepare --export` to perform a read-only sanity check on a backup without actually restoring it. This confirms the InnoDB pages are consistent.
+After a successful backup job with `prepare_after_backup: true`, the backup is already in `full-prepared` state. You can confirm this instantly:
 
 ```bash
 BACKUP_DIR=/var/backups/mysql/prod-mysql1/physical/20260322-010000
 
+cat "$BACKUP_DIR/xtrabackup_checkpoints"
+# backup_type = full-prepared   ← confirms apply-log completed successfully
+# from_lsn = 0
+# to_lsn = 36199564
+```
+
+For a deeper InnoDB consistency check, use `--prepare --export`. This makes individual tablespaces exportable and acts as a sanity check — if InnoDB pages are corrupt it will fail:
+
+```bash
 xtrabackup --prepare --export --target-dir="$BACKUP_DIR"
 # Should end with: "completed OK!"
 ```
 
-You can also enable this check automatically after every backup by setting `verify_after_backup: true` in the job's `backup_options`.
+> **Important:** Do not run plain `xtrabackup --prepare` (without `--export`) on an already-prepared backup — it will fail with `This target seems to be already prepared`. Always use `--prepare --export` if re-running prepare manually.
+
+You can enable the `--prepare --export` check automatically after every backup by setting `verify_after_backup: true` in the job's `backup_options`.
 
 ---
 
@@ -813,21 +837,39 @@ Without `--lock-file` all invocations share the default `/tmp/mysql-backup-drive
 
 ### How to use graceful stop
 
-To stop the driver cleanly between jobs (e.g. before a maintenance window) without killing a running backup, create the sentinel file configured in `graceful_stop_file`:
+The driver checks the sentinel file **before starting each job**, not after finishing one. This means:
+
+- If the sentinel file exists **before** the driver is invoked, **no jobs run** and the driver exits immediately.
+- If the sentinel file is **created while a job is running**, that job runs to completion, then the driver stops before starting the next one.
+
+First, configure `graceful_stop_file` in your `config.yml`:
+
+```yaml
+global:
+  graceful_stop_file: /root/.config/mysql-backup/GRACEFUL_STOP
+```
+
+Then to trigger a clean stop:
 
 ```bash
-# Tell the driver to stop after its current job finishes
+# Create the sentinel — driver will halt at the next between-job checkpoint
 touch /root/.config/mysql-backup/GRACEFUL_STOP
 
-# The driver exits cleanly. Remove the file before the next scheduled run.
+# Remove the file before the next cron invocation or it will block all jobs
 rm /root/.config/mysql-backup/GRACEFUL_STOP
 ```
 
-To auto-remove after 5 minutes:
+To auto-remove after 5 minutes (create and self-clean):
 
 ```bash
 touch /root/.config/mysql-backup/GRACEFUL_STOP
 (sleep 300 && rm -f /root/.config/mysql-backup/GRACEFUL_STOP) &
+```
+
+Log output when graceful stop is triggered:
+```
+[INFO]    Starting backup run
+[INFO]    Graceful stop requested - halting before next job
 ```
 
 ---
@@ -843,7 +885,7 @@ touch /root/.config/mysql-backup/GRACEFUL_STOP
 | `tmp_dir` | `/tmp/mysql-backup` | Temp directory (binlog state files, etc.) |
 | `default_encryption` | `none` | `none` \| `xtrabackup_aes256` \| `gpg` |
 | `default_retention_days` | `7` | Daily backup retention in days |
-| `weekly_retention_weeks` | `4` | Weekly retention (one backup per calendar week, beyond the daily window) |
+| `weekly_retention_weeks` | `4` | Weekly retention — keeps one backup per calendar week beyond the daily window. When a new backup is created in the same calendar week as an existing one, the older duplicate is removed (you will see `"Removing duplicate weekly backup"` in the log — this is normal). |
 | `default_timeout_seconds` | `3600` | Per-job wall-clock timeout |
 | `disk_space_factor` | `2.5` | Required free-space multiplier relative to estimated DB size |
 | `debug` | `false` | Verbose debug logging |
@@ -1032,6 +1074,23 @@ df -h /var/backups/mysql
 du -sh /var/lib/mysql
 ```
 
+### `--run-scheduled` shows "No jobs selected" every minute
+
+This is **expected behaviour** — not an error. The driver evaluates each job's `schedule_hint` on every cron invocation (every minute). At minutes where no job is due, it logs `[WARNING] No jobs selected` and exits cleanly. For example, with `binlog-5min` (`*/5 * * * *`), four out of every five minutes will show this message. The fifth minute will show the backup running.
+
+To confirm your schedules are correct:
+```bash
+mysql_backup_driver --list-jobs          # shows all jobs
+mysql_backup_driver --run-scheduled --dry-run  # shows which would run right now
+```
+
+### Physical backup: `This target seems to be already prepared`
+
+Occurs when `xtrabackup --prepare` (without `--export`) is run manually on a backup that is already in `full-prepared` state. The backup is fine — do not run plain `--prepare` again. If you want to re-verify, use:
+```bash
+xtrabackup --prepare --export --target-dir=<backup-dir>
+```
+
 ### Log files
 
 ```bash
@@ -1040,6 +1099,9 @@ tail -f /var/log/mysql-backup/mysql_backup.log
 
 # Precheck log
 tail -f /var/log/mysql-backup/mysql_backup_precheck.log
+
+# Cron log (scheduled runs)
+tail -f /var/log/mysql-backup/cron.log
 ```
 
 ### MySQL 8: `caching_sha2_password` auth errors
