@@ -17,6 +17,7 @@ dependencies = [
   "python-dateutil>=2.8",
   "pymysql>=1.0",
   "cryptography>=42.0.0",
+  "croniter>=2.0",
 ]
 
 [project.scripts]

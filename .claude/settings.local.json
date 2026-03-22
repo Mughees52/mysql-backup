@@ -6,7 +6,8 @@
       "Bash(multipass stop:*)",
       "Bash(multipass set:*)",
       "Bash(multipass start:*)",
-      "Bash(multipass transfer:*)"
+      "Bash(multipass transfer:*)",
+      "Bash(tar czf:*)"
     ]
   }
 }

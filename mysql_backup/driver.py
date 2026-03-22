@@ -3,6 +3,7 @@ import fcntl
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from .config import BackupConfig, ConfigError, JobConfig, load_config, validate_config
@@ -23,6 +24,15 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Show what would run without executing")
     parser.add_argument("--validate-config", action="store_true", help="Validate configuration and exit")
     parser.add_argument("--self-test", action="store_true", help="Run a lightweight self-test and exit")
+    parser.add_argument(
+        "--run-scheduled",
+        action="store_true",
+        help=(
+            "Run only the jobs whose schedule_hint is due at the current minute. "
+            "Designed to be called from a single '* * * * *' cron entry — the "
+            "driver reads the schedule from config.yml and decides what to run."
+        ),
+    )
     parser.add_argument(
         "--lock-file",
         help=(
@@ -65,6 +75,27 @@ class _LockFile:
                 pass
 
 
+def _is_job_due(schedule_hint: str, now: datetime) -> bool:
+    """
+    Return True if the job's cron schedule_hint was due within the last 60 seconds.
+
+    Uses croniter to compute the most recent scheduled time before `now`. If that
+    time falls within the last minute, the job is considered due for this invocation.
+    Invocations from a '* * * * *' cron entry therefore fire each job at exactly
+    the right minute as defined by its schedule_hint.
+    """
+    try:
+        from croniter import croniter, CroniterBadCronError
+    except ImportError:
+        return False
+    try:
+        cron = croniter(schedule_hint, now)
+        prev = cron.get_prev(datetime)
+        return (now - prev).total_seconds() < 60
+    except (CroniterBadCronError, Exception):
+        return False
+
+
 def _check_graceful_stop(stop_file: Optional[str]) -> bool:
     """Return True if the graceful-stop sentinel file exists."""
     if stop_file and os.path.exists(stop_file):
@@ -86,6 +117,12 @@ def _select_jobs(cfg: BackupConfig, args: argparse.Namespace) -> List[JobConfig]
         jobs = [j for j in jobs if j.name == args.job]
     if args.type:
         jobs = [j for j in jobs if j.type == args.type]
+    if args.run_scheduled:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        jobs = [
+            j for j in jobs
+            if j.schedule_hint and _is_job_due(j.schedule_hint, now)
+        ]
     return jobs
 
 

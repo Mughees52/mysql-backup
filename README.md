@@ -179,10 +179,10 @@ jobs:
 storage: []
 ```
 
-Set the password before running:
+Set the password before running (replace `s3cr3t` with the actual password you set when creating the backup user):
 
 ```bash
-export MYSQL_BACKUP_PASSWORD='your_password_here'
+export MYSQL_BACKUP_PASSWORD='s3cr3t'
 mysql_backup_driver --job logical-daily
 ```
 
@@ -315,7 +315,7 @@ storage:
 Always run `mysql_backup_precheck` before enabling cron to confirm binaries, connectivity, directories, and permissions are all in order:
 
 ```bash
-export MYSQL_BACKUP_PASSWORD='your_password'
+export MYSQL_BACKUP_PASSWORD='s3cr3t'
 source /root/mysql-backup-venv/bin/activate
 
 # Check all jobs:
@@ -347,7 +347,11 @@ mysql_backup_driver --job logical-daily
 mysql_backup_driver --type physical
 mysql_backup_driver --type binlog
 
+# Run only jobs whose schedule_hint is due right now (used by cron)
+mysql_backup_driver --run-scheduled
+
 # Dry run — shows what would happen without writing anything
+mysql_backup_driver --run-scheduled --dry-run
 mysql_backup_driver --job physical-daily --dry-run
 
 # Use a non-default config file
@@ -361,31 +365,63 @@ mysql_backup_driver --config prod.yml --lock-file /tmp/prod.lock
 
 ## 6. Scheduling with cron
 
-Edit the root crontab (`crontab -e` as root) or drop a file in `/etc/cron.d/`:
+The driver has a `--run-scheduled` mode that reads each job's `schedule_hint` from `config.yml` and runs only the jobs that are due at the current minute. **One cron entry drives all your jobs** — the schedule lives in `config.yml`, not in crontab.
+
+### How it works
+
+Every minute, cron invokes `mysql_backup_driver --run-scheduled`. The driver:
+1. Loads `config.yml`
+2. For each job, evaluates its `schedule_hint` cron expression against the current time
+3. Runs any job whose schedule was due within the last 60 seconds
+4. Jobs without a `schedule_hint` are skipped (manual-only)
+
+### Setup
+
+Create `/etc/cron.d/mysql-backup` with a single entry:
 
 ```cron
 # /etc/cron.d/mysql-backup
-SHELL=/bin/bash
-MYSQL_BACKUP_PASSWORD=your_password_here
+MYSQL_BACKUP_PASSWORD=s3cr3t
 
-# Logical backup at 2am daily
-0 2 * * * root source /root/mysql-backup-venv/bin/activate && mysql_backup_driver --job logical-daily >> /var/log/mysql-backup/cron.log 2>&1
-
-# Physical backup at 1am daily
-0 1 * * * root source /root/mysql-backup-venv/bin/activate && mysql_backup_driver --job physical-daily >> /var/log/mysql-backup/cron.log 2>&1
-
-# Binlog every 5 minutes
-*/5 * * * * root source /root/mysql-backup-venv/bin/activate && mysql_backup_driver --job binlog-5min >> /var/log/mysql-backup/cron.log 2>&1
+* * * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --run-scheduled >> /var/log/mysql-backup/cron.log 2>&1
 ```
 
-Or using full paths (simpler in cron — avoids virtualenv activation issues):
+To change when a job runs, edit `schedule_hint` in `config.yml` — no crontab changes needed.
+
+### Example schedule configuration in config.yml
+
+```yaml
+jobs:
+  - name: logical-daily
+    schedule_hint: "0 2 * * *"      # 2:00am every day
+
+  - name: physical-daily
+    schedule_hint: "0 1 * * *"      # 1:00am every day
+
+  - name: binlog-5min
+    schedule_hint: "*/5 * * * *"    # every 5 minutes
+
+  - name: manual-restore-test
+    # no schedule_hint — only runs when called explicitly with --job
+```
+
+### Verifying the schedule
+
+```bash
+# See which jobs would run right now (no changes made)
+mysql_backup_driver --run-scheduled --dry-run
+
+# List all jobs and their configured schedules
+mysql_backup_driver --list-jobs
+```
+
+### Multiple configs on the same host
 
 ```cron
-MYSQL_BACKUP_PASSWORD=your_password_here
+MYSQL_BACKUP_PASSWORD=s3cr3t
 
-0 2 * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --job logical-daily >> /var/log/mysql-backup/cron.log 2>&1
-0 1 * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --job physical-daily >> /var/log/mysql-backup/cron.log 2>&1
-*/5 * * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --job binlog-5min >> /var/log/mysql-backup/cron.log 2>&1
+* * * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --config /root/.config/mysql-backup/prod1.yml --lock-file /tmp/backup-prod1.lock --run-scheduled >> /var/log/mysql-backup/prod1-cron.log 2>&1
+* * * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --config /root/.config/mysql-backup/prod2.yml --lock-file /tmp/backup-prod2.lock --run-scheduled >> /var/log/mysql-backup/prod2-cron.log 2>&1
 ```
 
 ### Kubernetes CronJob
@@ -394,9 +430,9 @@ MYSQL_BACKUP_PASSWORD=your_password_here
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: mysql-backup-logical-daily
+  name: mysql-backup
 spec:
-  schedule: "0 2 * * *"
+  schedule: "* * * * *"    # runs every minute; schedule_hint in config.yml controls which jobs fire
   jobTemplate:
     spec:
       template:
@@ -404,7 +440,7 @@ spec:
           containers:
             - name: backup
               image: your-registry/mysql-backup:latest
-              args: ["mysql_backup_driver", "--config", "/etc/backup/config.yml", "--job", "logical-daily"]
+              args: ["mysql_backup_driver", "--config", "/etc/backup/config.yml", "--run-scheduled"]
               env:
                 - name: MYSQL_BACKUP_PASSWORD
                   valueFrom:
@@ -456,7 +492,7 @@ Instead of passing `--password=` on the command line (which appears in `ps` outp
 cat > /root/.config/mysql-backup/xtrabackup.cnf << 'EOF'
 [xtrabackup]
 user=backup
-password=your_password_here
+password=s3cr3t
 host=localhost
 port=3306
 EOF
@@ -584,7 +620,7 @@ myloader \
   --host=localhost \
   --port=3306 \
   --user=root \
-  --password=your_root_password \
+  --password=root_password \
   --directory=/var/backups/mysql/prod-mysql1/logical/20260322-020000 \
   --overwrite-tables \
   --threads=4 \
@@ -598,7 +634,7 @@ myloader \
   --host=localhost \
   --port=3306 \
   --user=root \
-  --password=your_root_password \
+  --password=root_password \
   --directory=/var/backups/mysql/prod-mysql1/logical/20260322-020000 \
   --source-db=myapp \
   --database=myapp_restored \
