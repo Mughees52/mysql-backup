@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **mysql-backup** is a Python 3 backup suite for MySQL/MariaDB. It orchestrates logical (mydumper), physical (xtrabackup/mariadb-backup), and binlog (mysqlbinlog) backups with encryption, deduplication, offsite storage, and GASCAN-compliant retention policies.
 
-Two package namespaces exist: `mysql_backup/` (primary) and `mysql_msp_backup/` (mirror, for managed service provider deployments). Both must be kept in sync — any logic change applies to both.
+The single package namespace is `mysql_backup/`.
 
 ## Dependencies
 
@@ -145,9 +145,6 @@ GRANT SELECT, RELOAD, PROCESS, LOCK TABLES, REPLICATION CLIENT, SHOW VIEW, BACKU
       REPLICATION SLAVE ON *.* TO 'backup'@'localhost';
 ```
 
-### Dual-package mirror
-`mysql_msp_backup/` mirrors `mysql_backup/` exactly. Every code change must be applied to both packages.
-
 ### rsync offsite — directory vs contents
 `_push_rsync` in `storage_remote.py` passes `local_path` **without** a trailing slash to rsync. This transfers the backup directory as a named subdirectory inside the destination (e.g., `20260325-142006/` appears under the target root). A trailing slash would strip the directory name and dump contents flat — each backup would overwrite the previous. The live rsync target is `ubuntu@192.168.2.3:/var/backups/mysql-offsite` on `proxysql`, accessed via SSH key at `/root/.ssh/id_ed25519`.
 
@@ -177,18 +174,21 @@ Key `backup_options` fields by type:
 
 `HOWTO-restore.md` documents the full restore procedure for a physical backup onto a separate server. It was validated end-to-end on 2026-03-25 against `proxysql` (Ubuntu 22.04, MySQL 8.0.45). The restore target is a second Multipass VM at `192.168.2.3`. Transfer goes mysql-box → Mac host → proxysql (two `multipass transfer` hops) because Multipass has no direct VM-to-VM file transfer. xtrabackup 8.0.35-35 must be installed on the target via the Percona repo before running `--copy-back`.
 
+`HOWTO-restore-logical.md` documents restoring the offsite logical backup (mydumper format) from `proxysql:/var/backups/mysql-offsite/` using `myloader`. Validated 2026-03-25. Key behaviours: myloader 0.10.0 silently skips databases that have no table data files — apply their `<db>-schema-create.sql.gz` manually; root uses `auth_socket` so use `--socket` instead of `--password`.
+
 ## Documentation Rule
 
 **No task is complete until all relevant docs are updated.** Apply the matrix below after every change:
 
-| Change type | README.md | CLAUDE.md | TESTING.md | HOWTO-restore.md |
-|-------------|-----------|-----------|------------|------------------|
-| Code / behaviour change | ✅ | ✅ | ✅ update affected tests | only if restore flow changes |
-| Config field added / removed | ✅ config reference + examples | ✅ Known Behaviours if non-obvious | — | — |
-| New CLI flag or entry point | ✅ section 5 + 8 | ✅ CLI Entry Points | ✅ add test | — |
-| Credential / auth change | ✅ setup + cron sections | ✅ Known Behaviours | ✅ remove/update env var in commands | — |
-| Restore procedure change | — | ✅ Testing section | — | ✅ Step 1 dir list + Tested Environment |
-| README structure change | — | — | — | — |
+| Change type | README.md | CLAUDE.md | TESTING.md | HOWTO-restore.md | HOWTO-restore-logical.md |
+|-------------|-----------|-----------|------------|------------------|--------------------------|
+| Code / behaviour change | ✅ | ✅ | ✅ update affected tests | if physical restore changes | if logical restore changes |
+| Config field added / removed | ✅ config reference + examples | ✅ Known Behaviours if non-obvious | — | — | — |
+| New CLI flag or entry point | ✅ section 5 + 8 | ✅ CLI Entry Points | ✅ add test | — | — |
+| Credential / auth change | ✅ setup + cron sections | ✅ Known Behaviours | ✅ remove/update env var in commands | — | ✅ auth note + commands |
+| Physical restore change | — | ✅ Testing section | — | ✅ Step 1 dir list + Tested Environment | — |
+| Logical restore change | — | ✅ Testing section | — | — | ✅ Step 1 dir list + Tested Environment |
+| README structure change | — | — | — | — | — |
 
 ### Per-document rules
 
@@ -210,8 +210,14 @@ Key `backup_options` fields by type:
 - A new test is added or an existing test result changes
 - The pre-test environment state changes (MySQL version, disk, config snapshot)
 
-**`HOWTO-restore.md`** — step-by-step restore runbook. Update when:
+**`HOWTO-restore.md`** — physical backup restore runbook. Update when:
 - The backup directory list in Step 1 example output changes
 - The Tested Environment table needs a new date or backup path
 - Any command in the procedure changes
+- A new troubleshooting case is discovered during a restore
+
+**`HOWTO-restore-logical.md`** — logical backup restore from offsite runbook. Update when:
+- The offsite backup directory path or timestamp changes
+- myloader version changes (re-test the empty-db edge case)
+- Auth method on the restore target changes (socket vs password)
 - A new troubleshooting case is discovered during a restore
