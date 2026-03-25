@@ -8,7 +8,8 @@
       "Bash(multipass start:*)",
       "Bash(multipass transfer:*)",
       "Bash(tar czf:*)",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(multipass list:*)"
     ]
   }
 }

@@ -116,6 +116,8 @@ AES256-encrypted physical backups require two steps after backup:
 
 `backup_physical.py` does this automatically when `use_xtra_encryption: true` and `prepare_after_backup: true`. Do **not** pass `--encrypt` to the prepare step — it must be `--decrypt`.
 
+The decrypt step writes plain files alongside their `.xbcrypt` originals — both exist on disk simultaneously after the pipeline runs. `xtrabackup --copy-back` skips `.xbcrypt` files automatically and copies only the plain decrypted files to the data directory. This means no separate decrypt step is needed at restore time when `prepare_after_backup: true`.
+
 ### xtrabackup credentials file (`defaults_file`)
 When `defaults_file` is set in a physical job's `backup_options`, the path is passed as `--defaults-file=<path>` (must be the first argument after the binary) and `--password` is omitted from the command line. The file uses `[xtrabackup]` section format:
 ```ini
@@ -162,6 +164,10 @@ Key `backup_options` fields by type:
 
 `TESTING.md` contains the complete end-to-end test record with real command output captured from `mysql-box`. Run the same sequence after any significant change to confirm nothing regressed. The 13 tests cover: config validation, self-test, list-jobs, precheck, dry-run, logical backup, physical backup (encrypt+decrypt+prepare), binlog backup, retention, lock file, graceful stop, and `--run-scheduled` schedule dispatch.
 
+`HOWTO-restore.md` documents the full restore procedure for a physical backup onto a separate server. It was validated end-to-end on 2026-03-25 against `proxysql` (Ubuntu 22.04, MySQL 8.0.45). The restore target is a second Multipass VM at `192.168.2.3`. Transfer goes mysql-box → Mac host → proxysql (two `multipass transfer` hops) because Multipass has no direct VM-to-VM file transfer. xtrabackup 8.0.35-35 must be installed on the target via the Percona repo before running `--copy-back`.
+
 ## Documentation Rule
 
 After every successful code change and test, update **`README.md`** (end-user docs), **`CLAUDE.md`** (developer context), and **`TESTING.md`** (test record) before considering the task complete.
+
+After any restore procedure change or re-validation, update **`HOWTO-restore.md`** (restore runbook) — specifically the Step 1 example output (backup directory list), the Tested Environment table, and any command that changed.
