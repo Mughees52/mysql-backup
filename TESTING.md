@@ -53,8 +53,7 @@ instances:
   - name: mysql-box
     host: localhost
     port: 3306
-    user: backup
-    password_env: MYSQL_BACKUP_PASSWORD
+    user: root
 
 jobs:
   - name: logical-daily
@@ -148,7 +147,7 @@ binlog-5min [binlog] on instance mysql-box
 ## Test 4 — Precheck (all jobs)
 
 ```
-$ MYSQL_BACKUP_PASSWORD=backup_pass mysql_backup_precheck
+$ mysql_backup_precheck
 
 2026-03-22 15:44:56 [INFO] mysql_backup_precheck - Running precheck for job
 2026-03-22 15:44:56 [INFO] mysql_backup_precheck - Running precheck for job
@@ -163,7 +162,7 @@ Precheck OK for selected jobs
 ## Test 5 — `--run-scheduled` dry-run (no jobs due)
 
 ```
-$ MYSQL_BACKUP_PASSWORD=backup_pass mysql_backup_driver --run-scheduled --dry-run
+$ mysql_backup_driver --run-scheduled --dry-run
 
 2026-03-22 15:44:59 [INFO] mysql_backup - Loaded configuration
 2026-03-22 15:44:59 [WARNING] mysql_backup - No jobs selected
@@ -176,7 +175,7 @@ $ MYSQL_BACKUP_PASSWORD=backup_pass mysql_backup_driver --run-scheduled --dry-ru
 ## Test 6 — Logical backup (`logical-daily`)
 
 ```
-$ MYSQL_BACKUP_PASSWORD=backup_pass mysql_backup_driver --job logical-daily
+$ mysql_backup_driver --job logical-daily
 
 2026-03-22 15:45:13 [INFO] mysql_backup - Loaded configuration
 2026-03-22 15:45:13 [INFO] mysql_backup - Starting backup run
@@ -204,7 +203,7 @@ $ du -sh /var/backups/mysql/mysql-box/logical/20260322-154513
 Tests: AES-256 encryption, `--defaults-file` credentials, automatic decrypt→prepare pipeline.
 
 ```
-$ MYSQL_BACKUP_PASSWORD=backup_pass mysql_backup_driver --job physical-daily
+$ mysql_backup_driver --job physical-daily
 
 2026-03-22 15:45:20 [INFO] mysql_backup - Loaded configuration
 2026-03-22 15:45:20 [INFO] mysql_backup - Starting backup run
@@ -250,7 +249,7 @@ binlog_pos   = filename 'binlog.000072', position '157'
 Tests: `mysqlbinlog --read-from-remote-server`, position state file, output file.
 
 ```
-$ MYSQL_BACKUP_PASSWORD=backup_pass mysql_backup_driver --job binlog-5min
+$ mysql_backup_driver --job binlog-5min
 
 2026-03-22 15:45:53 [INFO] mysql_backup - Loaded configuration
 2026-03-22 15:45:53 [INFO] mysql_backup - Starting backup run
@@ -300,7 +299,7 @@ $ ls /var/backups/mysql/mysql-box/logical/
 ## Test 10 — Dry-run mode
 
 ```
-$ MYSQL_BACKUP_PASSWORD=backup_pass mysql_backup_driver --job physical-daily --dry-run
+$ mysql_backup_driver --job physical-daily --dry-run
 
 2026-03-22 15:46:13 [INFO] mysql_backup - Loaded configuration
 2026-03-22 15:46:13 [INFO] mysql_backup - Starting backup run
@@ -319,7 +318,7 @@ Held the lock file externally with `flock`, then ran the driver:
 
 ```
 $ (flock -x 200; sleep 5) 200>/tmp/mysql-backup-driver.lock &
-$ MYSQL_BACKUP_PASSWORD=backup_pass mysql_backup_driver --job logical-daily
+$ mysql_backup_driver --job logical-daily
 
 2026-03-22 15:48:02 [INFO] mysql_backup - Loaded configuration
 2026-03-22 15:48:02 [WARNING] mysql_backup - Another backup driver instance is already running
@@ -400,7 +399,6 @@ $ du -sh /var/backups/mysql/
 
 Active cron (`/etc/cron.d/mysql-backup`):
 ```
-MYSQL_BACKUP_PASSWORD=backup_pass
 * * * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --run-scheduled >> /var/log/mysql-backup/cron.log 2>&1
 ```
 

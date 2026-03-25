@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional, Tuple
 
 import pymysql
@@ -12,10 +13,13 @@ def get_connection(instance: InstanceConfig) -> pymysql.connections.Connection:
         "host": instance.host,
         "port": instance.port,
         "user": instance.user,
-        "password": instance.password,
         "charset": "utf8mb4",
         "cursorclass": pymysql.cursors.DictCursor,
     }
+    if instance.password is not None:
+        kwargs["password"] = instance.password
+    else:
+        kwargs["read_default_file"] = os.path.expanduser("~/.my.cnf")
     if instance.socket:
         kwargs["unix_socket"] = instance.socket
     logger.debug("Connecting to MySQL", extra={"host": instance.host, "port": instance.port})

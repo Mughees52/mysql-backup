@@ -164,8 +164,7 @@ instances:
   - name: local-mysql
     host: localhost
     port: 3306
-    user: backup
-    password_env: MYSQL_BACKUP_PASSWORD   # export this before running
+    user: root          # must match the user in ~/.my.cnf
 
 jobs:
   - name: logical-daily
@@ -181,10 +180,20 @@ jobs:
 storage: []
 ```
 
-Set the password before running (replace `s3cr3t` with the actual password you set when creating the backup user):
+When no `password` or `password_env` is set in the instance config, the driver reads credentials from `~/.my.cnf` automatically (via pymysql's `read_default_file`). Store your MySQL password there:
 
 ```bash
-export MYSQL_BACKUP_PASSWORD='s3cr3t'
+# /root/.my.cnf  (chmod 600)
+[client]
+user=root
+password=your_password_here
+host=localhost
+socket=/var/run/mysqld/mysqld.sock
+```
+
+Then run without any environment variable:
+
+```bash
 mysql_backup_driver --job logical-daily
 ```
 
@@ -206,22 +215,19 @@ instances:
   - name: prod-mysql1
     host: localhost
     port: 3306
-    user: backup
-    password_env: MYSQL_BACKUP_PASSWORD
+    user: root            # credentials read from ~/.my.cnf
 
   - name: prod-replica1
     host: localhost
     port: 3306
-    user: backup
-    password_env: MYSQL_BACKUP_PASSWORD
+    user: root            # credentials read from ~/.my.cnf
     replica_only: true          # skip backup if not currently an active replica
     read_only_only: false
 
   - name: prod-pxc1
     host: 10.0.1.10
     port: 3306
-    user: backup
-    password_env: PXC_BACKUP_PASSWORD
+    user: root            # credentials read from ~/.my.cnf
     pxc: true
     pxc_desync: true
     pxc_cluster_name: prod-pxc
@@ -383,10 +389,10 @@ Create `/etc/cron.d/mysql-backup` with a single entry:
 
 ```cron
 # /etc/cron.d/mysql-backup
-MYSQL_BACKUP_PASSWORD=s3cr3t
-
 * * * * * root /root/mysql-backup-venv/bin/mysql_backup_driver --run-scheduled >> /var/log/mysql-backup/cron.log 2>&1
 ```
+
+No password environment variable is needed. The driver reads credentials from `/root/.my.cnf` automatically.
 
 To change when a job runs, edit `schedule_hint` in `config.yml` — no crontab changes needed.
 
@@ -899,7 +905,8 @@ Log output when graceful stop is triggered:
 | `host` | `localhost` | MySQL host |
 | `port` | `3306` | MySQL port |
 | `user` | `root` | MySQL user |
-| `password_env` | *(none)* | Env var holding the password (recommended) |
+| `password` | *(none)* | Password literal (not recommended — use `~/.my.cnf` instead) |
+| `password_env` | *(none)* | Env var holding the password (alternative to `~/.my.cnf`) |
 | `socket` | *(none)* | Unix socket path (overrides host/port) |
 | `pxc` | `false` | Mark as a PXC node |
 | `pxc_desync` | `false` | Desync from cluster during backup |

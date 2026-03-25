@@ -128,6 +128,14 @@ host=localhost
 port=3306
 ```
 
+### MySQL credential resolution order
+`mysql_client.py` resolves credentials in this order:
+1. `password` literal in config → used directly
+2. `password_env` in config → reads the named env var
+3. Neither set → `get_connection()` passes `read_default_file=~/.my.cnf` to pymysql; user/password come from the `[client]` section of that file
+
+The live deployment on `mysql-box` uses option 3: no `password_env` in `config.yml`, credentials stored in `/root/.my.cnf`. xtrabackup physical backups use a separate `defaults_file` (`/root/.config/mysql-backup/xtrabackup.cnf`) that is unchanged.
+
 ### Binlog streaming
 `backup_binlog.py` always passes `--read-from-remote-server` to mysqlbinlog. Without it, mysqlbinlog tries to read a local file. The backup user needs `REPLICATION SLAVE` privilege. MySQL 8.0 uses `binlog.XXXXXX` filenames (not `mysql-bin.XXXXXX`).
 
