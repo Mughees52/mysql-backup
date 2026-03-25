@@ -404,6 +404,64 @@ Active cron (`/etc/cron.d/mysql-backup`):
 
 ---
 
+## Test 14 — Offsite upload (rsync to proxysql)
+
+Tests: `storage_remote.py` rsync push, SSH key auth, timestamped directory preserved on remote.
+
+**Setup:** SSH key generated on `mysql-box` (`/root/.ssh/id_ed25519`), public key installed in
+`ubuntu@proxysql:~/.ssh/authorized_keys`. Destination directory `/var/backups/mysql-offsite`
+created on `proxysql` (192.168.2.3).
+
+Storage target added to `config.yml`:
+```yaml
+storage:
+  - name: rsync-proxysql
+    type: rsync
+    options:
+      target: ubuntu@192.168.2.3:/var/backups/mysql-offsite
+```
+
+`logical-daily` wired to the target:
+```yaml
+offsite_targets: [rsync-proxysql]
+```
+
+```
+$ mysql_backup_driver --job logical-daily
+
+2026-03-25 14:20:06 [INFO] mysql_backup - Loaded configuration
+2026-03-25 14:20:06 [INFO] mysql_backup - Starting backup run
+2026-03-25 14:20:06 [INFO] mysql_backup - Estimated database size
+2026-03-25 14:20:06 [INFO] mysql_backup - Disk space check
+2026-03-25 14:20:06 [INFO] mysql_backup - Starting logical backup
+2026-03-25 14:20:07 [INFO] mysql_backup - Uploading backup with rsync
+2026-03-25 14:20:07 [INFO] mysql_backup - Removing duplicate weekly backup
+2026-03-25 14:20:07 [INFO] mysql_backup - Logical backup completed
+```
+
+Verified on proxysql:
+```
+$ find /var/backups/mysql-offsite -mindepth 1 -maxdepth 1 -type d
+/var/backups/mysql-offsite/20260325-142006
+
+$ du -sh /var/backups/mysql-offsite/20260325-142006/
+1.3M    /var/backups/mysql-offsite/20260325-142006/
+
+$ find /var/backups/mysql-offsite -type f | wc -l
+253
+```
+
+**Bug found and fixed during this test:** `_push_rsync` in `storage_remote.py` had a trailing slash
+on `local_path` (`local_path.rstrip("/") + "/"`), which caused rsync to upload the *contents* of the
+backup directory rather than the directory itself — all files landed flat in the destination root,
+and each subsequent backup would overwrite the last. Fixed by removing the trailing slash so rsync
+transfers the directory as a named subdirectory.
+
+**Result: PASS** — rsync upload completed, timestamped directory `20260325-142006/` with 253 files
+(1.3 MB) present on proxysql. Offsite upload failures are non-fatal by design (logged and skipped).
+
+---
+
 ## Summary
 
 | # | Test | Result |
@@ -421,5 +479,6 @@ Active cron (`/etc/cron.d/mysql-backup`):
 | 11 | Lock file — second instance blocked when lock held | PASS |
 | 12 | Graceful stop — sentinel file halts driver cleanly before first job | PASS |
 | 13 | `--run-scheduled` — correct job fired at 5-min boundary, others skipped | PASS |
+| 14 | Offsite rsync upload — timestamped directory transferred to proxysql | PASS |
 
-**All 13 tests passed. No failures.**
+**All 14 tests passed. No failures.**

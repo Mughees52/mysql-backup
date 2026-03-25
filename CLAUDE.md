@@ -148,6 +148,9 @@ GRANT SELECT, RELOAD, PROCESS, LOCK TABLES, REPLICATION CLIENT, SHOW VIEW, BACKU
 ### Dual-package mirror
 `mysql_msp_backup/` mirrors `mysql_backup/` exactly. Every code change must be applied to both packages.
 
+### rsync offsite — directory vs contents
+`_push_rsync` in `storage_remote.py` passes `local_path` **without** a trailing slash to rsync. This transfers the backup directory as a named subdirectory inside the destination (e.g., `20260325-142006/` appears under the target root). A trailing slash would strip the directory name and dump contents flat — each backup would overwrite the previous. The live rsync target is `ubuntu@192.168.2.3:/var/backups/mysql-offsite` on `proxysql`, accessed via SSH key at `/root/.ssh/id_ed25519`.
+
 ### Disk space requirement
 2.5× estimated DB size + 512MB must be free on the backup volume before any job runs. The check happens in `backup_logical.py` and `backup_physical.py` before any backup tool is invoked.
 
@@ -170,7 +173,7 @@ Key `backup_options` fields by type:
 
 ## Testing
 
-`TESTING.md` contains the complete end-to-end test record with real command output captured from `mysql-box`. Run the same sequence after any significant change to confirm nothing regressed. The 13 tests cover: config validation, self-test, list-jobs, precheck, dry-run, logical backup, physical backup (encrypt+decrypt+prepare), binlog backup, retention, lock file, graceful stop, and `--run-scheduled` schedule dispatch.
+`TESTING.md` contains the complete end-to-end test record with real command output captured from `mysql-box`. Run the same sequence after any significant change to confirm nothing regressed. The 14 tests cover: config validation, self-test, list-jobs, precheck, dry-run, logical backup, physical backup (encrypt+decrypt+prepare), binlog backup, retention, lock file, graceful stop, `--run-scheduled` schedule dispatch, and rsync offsite upload to `proxysql`.
 
 `HOWTO-restore.md` documents the full restore procedure for a physical backup onto a separate server. It was validated end-to-end on 2026-03-25 against `proxysql` (Ubuntu 22.04, MySQL 8.0.45). The restore target is a second Multipass VM at `192.168.2.3`. Transfer goes mysql-box → Mac host → proxysql (two `multipass transfer` hops) because Multipass has no direct VM-to-VM file transfer. xtrabackup 8.0.35-35 must be installed on the target via the Percona repo before running `--copy-back`.
 

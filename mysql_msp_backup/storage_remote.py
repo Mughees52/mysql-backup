@@ -23,7 +23,7 @@ def _push_rsync(target: StorageTargetConfig, local_path: str) -> None:
     opts = target.options
     dest = opts["target"]
     logger.info("Uploading backup with rsync", extra={"local": local_path, "dest": dest})
-    run_with_retries(["rsync", "-a", local_path.rstrip("/") + "/", dest.rstrip("/") + "/"], check=True)
+    run_with_retries(["rsync", "-a", local_path.rstrip("/"), dest.rstrip("/") + "/"], check=True)
 
 
 def _push_gcs(target: StorageTargetConfig, local_path: str) -> None:
