@@ -176,6 +176,39 @@ Key `backup_options` fields by type:
 
 ## Documentation Rule
 
-After every successful code change and test, update **`README.md`** (end-user docs), **`CLAUDE.md`** (developer context), and **`TESTING.md`** (test record) before considering the task complete.
+**No task is complete until all relevant docs are updated.** Apply the matrix below after every change:
 
-After any restore procedure change or re-validation, update **`HOWTO-restore.md`** (restore runbook) — specifically the Step 1 example output (backup directory list), the Tested Environment table, and any command that changed.
+| Change type | README.md | CLAUDE.md | TESTING.md | HOWTO-restore.md |
+|-------------|-----------|-----------|------------|------------------|
+| Code / behaviour change | ✅ | ✅ | ✅ update affected tests | only if restore flow changes |
+| Config field added / removed | ✅ config reference + examples | ✅ Known Behaviours if non-obvious | — | — |
+| New CLI flag or entry point | ✅ section 5 + 8 | ✅ CLI Entry Points | ✅ add test | — |
+| Credential / auth change | ✅ setup + cron sections | ✅ Known Behaviours | ✅ remove/update env var in commands | — |
+| Restore procedure change | — | ✅ Testing section | — | ✅ Step 1 dir list + Tested Environment |
+| README structure change | — | — | — | — |
+
+### Per-document rules
+
+**`README.md`** — end-user docs. Keep in sync with the live deployment on `mysql-box`:
+- Every config example must match what actually works on `mysql-box`
+- Every command shown must be runnable as-is (no `export MYSQL_BACKUP_PASSWORD`, no missing flags)
+- Every new `##` section must have a `[↑ Back to top](#table-of-contents)` link at the bottom, placed immediately above the `---` divider
+- The Table of Contents must list every `##` section
+
+**`CLAUDE.md`** — developer context for Claude. Update when:
+- Architecture or job selection flow changes
+- A new non-obvious behaviour or constraint is discovered
+- A new module is added to Key Modules
+- The credential resolution order or auth mechanism changes
+- The live deployment environment changes (VM names, paths, versions)
+
+**`TESTING.md`** — live test record with real captured output. Update when:
+- Any command's syntax changes (flags, env vars, prefixes)
+- A new test is added or an existing test result changes
+- The pre-test environment state changes (MySQL version, disk, config snapshot)
+
+**`HOWTO-restore.md`** — step-by-step restore runbook. Update when:
+- The backup directory list in Step 1 example output changes
+- The Tested Environment table needs a new date or backup path
+- Any command in the procedure changes
+- A new troubleshooting case is discovered during a restore

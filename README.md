@@ -59,6 +59,8 @@ Python 3 backup suite for MySQL/MariaDB providing:
 
 **xtrabackup version compatibility:** xtrabackup 8.x is required for MySQL 8.x. xtrabackup 2.4.x is for MySQL 5.7 only. Running a mismatched version will produce `unsupported server version` errors.
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ## 2. Installation
@@ -108,6 +110,8 @@ sudo dnf install ~/rpmbuild/RPMS/noarch/mysql-backup-${VERSION}-1*.rpm
 
 > **Note:** Do not run `sudo -i` again after activating the virtualenv — it resets `PATH`. If you get `command not found`, re-run `source /root/mysql-backup-venv/bin/activate` or use the full path `/root/mysql-backup-venv/bin/mysql_backup_driver`.
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ## 3. MySQL user setup
@@ -138,6 +142,8 @@ FLUSH PRIVILEGES;
 | `SHOW VIEW` | Dumping views with mydumper |
 | `BACKUP_ADMIN` | xtrabackup on MySQL 8+ (`LOCK INSTANCE FOR BACKUP`) |
 | `REPLICATION SLAVE` | `mysqlbinlog --read-from-remote-server` binlog streaming |
+
+[↑ Back to top](#table-of-contents)
 
 ---
 
@@ -314,6 +320,8 @@ storage:
       # sas_token: "sp=rw&st=..."
 ```
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ## 5. Running backups
@@ -368,6 +376,8 @@ mysql_backup_driver --config /etc/mysql-backup/prod.yml
 # Use a non-default lock file (for multiple configs on same host)
 mysql_backup_driver --config prod.yml --lock-file /tmp/prod.lock
 ```
+
+[↑ Back to top](#table-of-contents)
 
 ---
 
@@ -472,6 +482,8 @@ spec:
                 claimName: mysql-backup-pvc
 ```
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ## 7. How-to guides
@@ -535,6 +547,8 @@ When `prepare_after_backup: true`, the driver automatically:
 2. Runs `xtrabackup --prepare --target-dir=...` to apply the redo log and make the backup consistent
 
 This is a two-step process because xtrabackup cannot apply the redo log to encrypted files directly. Both steps happen automatically — you do not need to do anything manually.
+
+[↑ Back to top](#table-of-contents)
 
 ---
 
@@ -602,6 +616,8 @@ This is required for `mysqlbinlog --read-from-remote-server`. Without it you wil
 ERROR: Got error reading packet from server: Access denied; you need (at least one of) the REPLICATION SLAVE privilege(s)
 ```
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ### How to restore a logical backup
@@ -653,6 +669,8 @@ myloader \
 ```
 
 > The backup directory stores one file per table chunk — restoring a single table is possible by copying only the relevant files into a new directory and pointing `myloader` at it.
+
+[↑ Back to top](#table-of-contents)
 
 ---
 
@@ -718,6 +736,8 @@ systemctl start mysql
 mysql -u root -p -e "SHOW DATABASES;"
 ```
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ### How to do point-in-time recovery using binlogs
@@ -773,6 +793,8 @@ mysqlbinlog \
   | mysql -u root -p
 ```
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ### How to verify a physical backup without restoring
@@ -799,6 +821,8 @@ xtrabackup --prepare --export --target-dir="$BACKUP_DIR"
 
 You can enable the `--prepare --export` check automatically after every backup by setting `verify_after_backup: true` in the job's `backup_options`.
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ### How to upgrade the tool
@@ -821,6 +845,8 @@ source /root/mysql-backup-venv/bin/activate
 pip install --force-reinstall /path/to/mysql-backup-source/
 ```
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ### How to run multiple configs on the same host
@@ -838,6 +864,8 @@ mysql_backup_driver \
 ```
 
 Without `--lock-file` all invocations share the default `/tmp/mysql-backup-driver.lock` and cannot run concurrently.
+
+[↑ Back to top](#table-of-contents)
 
 ---
 
@@ -877,6 +905,8 @@ Log output when graceful stop is triggered:
 [INFO]    Starting backup run
 [INFO]    Graceful stop requested - halting before next job
 ```
+
+[↑ Back to top](#table-of-contents)
 
 ---
 
@@ -1005,6 +1035,8 @@ Log output when graceful stop is triggered:
 | `sas_token` | SAS token (or set `AZURE_STORAGE_SAS_TOKEN` env var) |
 | `connection_string` | Connection string (or set `AZURE_STORAGE_CONNECTION_STRING`) |
 
+[↑ Back to top](#table-of-contents)
+
 ---
 
 ## 9. Troubleshooting
@@ -1126,3 +1158,5 @@ Or switch the backup user to `mysql_native_password`:
 ALTER USER 'backup'@'localhost' IDENTIFIED WITH mysql_native_password BY 'your_password';
 FLUSH PRIVILEGES;
 ```
+
+[↑ Back to top](#table-of-contents)

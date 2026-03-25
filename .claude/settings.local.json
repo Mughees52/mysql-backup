@@ -9,7 +9,8 @@
       "Bash(multipass transfer:*)",
       "Bash(tar czf:*)",
       "Bash(echo \"EXIT:$?\")",
-      "Bash(multipass list:*)"
+      "Bash(multipass list:*)",
+      "Bash(python3:*)"
     ]
   }
 }
