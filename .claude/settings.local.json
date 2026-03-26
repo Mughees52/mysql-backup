@@ -10,7 +10,8 @@
       "Bash(tar czf:*)",
       "Bash(echo \"EXIT:$?\")",
       "Bash(multipass list:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(wc -l \"/Users/mugheesahmed/workspace/Mughees scripts/\"*.md)"
     ]
   }
 }

@@ -462,6 +462,94 @@ transfers the directory as a named subdirectory.
 
 ---
 
+## Test 15 — Logical restore from offsite backup (myloader on proxysql)
+
+Tests: `myloader` restore from mydumper offsite copy, auth_socket handling, empty-database edge case.
+
+**Setup:** myloader installed on proxysql via `apt-get install -y mydumper`.
+Backup used: `/var/backups/mysql-offsite/20260325-142006` (253 files, 1.3 MB compressed).
+
+```bash
+# Drop mughees to simulate clean restore
+sudo mysql -e "DROP DATABASE IF EXISTS mughees;"
+
+# Run myloader
+sudo myloader \
+  --socket=/var/run/mysqld/mysqld.sock \
+  --user=root \
+  --directory=/var/backups/mysql-offsite/20260325-142006 \
+  --overwrite-tables \
+  --threads=4 \
+  --verbose=3
+
+echo $?
+```
+
+Output (abbreviated):
+```
+** Message: Creating table `sys`.`x$schema_table_lock_waits`
+** Message: Dropping table or view (if exists) `mysql`.`gtid_executed`
+** Message: Creating table `mysql`.`gtid_executed`
+...
+0
+```
+
+Post-restore verification:
+```
+$ sudo mysql -e "SHOW DATABASES;"
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mysql              |
+| performance_schema |
+| sys                |
++--------------------+
+```
+
+**Edge case — empty database not restored by myloader:**
+`mughees` was absent because myloader 0.10.0 skips databases that have no table data files.
+Applied the schema-create manually:
+
+```bash
+sudo bash -c 'zcat /var/backups/mysql-offsite/20260325-142006/mughees-schema-create.sql.gz | mysql'
+sudo mysql -e "SHOW DATABASES;"
+```
+
+```
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| mughees            |
+| mysql              |
+| performance_schema |
+| sys                |
++--------------------+
+```
+
+User accounts verified:
+```
+$ sudo mysql -e "SELECT user, host FROM mysql.user ORDER BY user;"
++--------------------+-----------+
+| user               | host      |
++--------------------+-----------+
+| backup             | localhost |
+| debian-sys-maint   | localhost |
+| mysql.infoschema   | localhost |
+| mysql.session      | localhost |
+| mysql.sys          | localhost |
+| pcs_test           | localhost |
+| root               | localhost |
++--------------------+-----------+
+```
+
+**Result: PASS** — all tables and user accounts restored from offsite logical backup.
+Empty `mughees` database created manually via schema-create. See `HOWTO-restore-logical.md`
+for the full runbook.
+
+---
+
 ## Summary
 
 | # | Test | Result |
@@ -480,5 +568,6 @@ transfers the directory as a named subdirectory.
 | 12 | Graceful stop — sentinel file halts driver cleanly before first job | PASS |
 | 13 | `--run-scheduled` — correct job fired at 5-min boundary, others skipped | PASS |
 | 14 | Offsite rsync upload — timestamped directory transferred to proxysql | PASS |
+| 15 | Logical restore from offsite — myloader, all tables + users, empty db via schema-create | PASS |
 
-**All 14 tests passed. No failures.**
+**All 15 tests passed. No failures.**

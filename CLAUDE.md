@@ -168,27 +168,34 @@ Key `backup_options` fields by type:
 | logical | `mydumper_path`, `threads`, `compress`, `dump_triggers`, `less_locking` |
 | binlog | `mysqlbinlog_path`, `binlog_file` (first run only), `min_free_disk_pct`, `binlog_retention_days` |
 
-## Testing
+## Documentation
 
-`TESTING.md` contains the complete end-to-end test record with real command output captured from `mysql-box`. Run the same sequence after any significant change to confirm nothing regressed. The 14 tests cover: config validation, self-test, list-jobs, precheck, dry-run, logical backup, physical backup (encrypt+decrypt+prepare), binlog backup, retention, lock file, graceful stop, `--run-scheduled` schedule dispatch, and rsync offsite upload to `proxysql`.
+All guides and runbooks live in `docs/`:
 
-`HOWTO-restore.md` documents the full restore procedure for a physical backup onto a separate server. It was validated end-to-end on 2026-03-25 against `proxysql` (Ubuntu 22.04, MySQL 8.0.45). The restore target is a second Multipass VM at `192.168.2.3`. Transfer goes mysql-box → Mac host → proxysql (two `multipass transfer` hops) because Multipass has no direct VM-to-VM file transfer. xtrabackup 8.0.35-35 must be installed on the target via the Percona repo before running `--copy-back`.
-
-`HOWTO-restore-logical.md` documents restoring the offsite logical backup (mydumper format) from `proxysql:/var/backups/mysql-offsite/` using `myloader`. Validated 2026-03-25. Key behaviours: myloader 0.10.0 silently skips databases that have no table data files — apply their `<db>-schema-create.sql.gz` manually; root uses `auth_socket` so use `--socket` instead of `--password`.
+| File | Contents |
+|------|----------|
+| `docs/testing.md` | Complete end-to-end test record with real captured output from `mysql-box`. 15 tests: config validation, self-test, list-jobs, precheck, dry-run, logical backup, physical backup (encrypt+decrypt+prepare), binlog backup, retention, lock file, graceful stop, `--run-scheduled` dispatch, rsync offsite upload, logical restore from offsite. |
+| `docs/restore-physical.md` | Full restore procedure for a physical xtrabackup backup onto a separate server. Validated 2026-03-25 on `proxysql` (Ubuntu 22.04, MySQL 8.0.45). Transfer goes mysql-box → Mac host → proxysql (two `multipass transfer` hops). xtrabackup 8.0.35-35 installed via Percona repo. |
+| `docs/restore-logical.md` | Restore procedure for the offsite mydumper backup from `proxysql:/var/backups/mysql-offsite/` using `myloader`. Validated 2026-03-25. myloader 0.10.0 silently skips databases with no table data — apply `<db>-schema-create.sql.gz` manually. Root uses `auth_socket`: use `--socket`, not `--password`. |
+| `docs/setup-encryption.md` | AES-256 encryption setup: key generation, credentials file, job config. |
+| `docs/setup-binlog.md` | Binlog backup setup: enable binary logging, job config, REPLICATION SLAVE grant. |
+| `docs/pitr.md` | Point-in-time recovery using binlogs after a physical restore. |
+| `docs/verify-backup.md` | Verify a physical backup without restoring: `full-prepared` check and `--prepare --export`. |
+| `docs/operations.md` | Upgrade, multiple configs, graceful stop. |
 
 ## Documentation Rule
 
 **No task is complete until all relevant docs are updated.** Apply the matrix below after every change:
 
-| Change type | README.md | CLAUDE.md | TESTING.md | HOWTO-restore.md | HOWTO-restore-logical.md |
-|-------------|-----------|-----------|------------|------------------|--------------------------|
+| Change type | README.md | CLAUDE.md | docs/testing.md | docs/restore-physical.md | docs/restore-logical.md |
+|-------------|-----------|-----------|-----------------|--------------------------|-------------------------|
 | Code / behaviour change | ✅ | ✅ | ✅ update affected tests | if physical restore changes | if logical restore changes |
 | Config field added / removed | ✅ config reference + examples | ✅ Known Behaviours if non-obvious | — | — | — |
 | New CLI flag or entry point | ✅ section 5 + 8 | ✅ CLI Entry Points | ✅ add test | — | — |
 | Credential / auth change | ✅ setup + cron sections | ✅ Known Behaviours | ✅ remove/update env var in commands | — | ✅ auth note + commands |
-| Physical restore change | — | ✅ Testing section | — | ✅ Step 1 dir list + Tested Environment | — |
-| Logical restore change | — | ✅ Testing section | — | — | ✅ Step 1 dir list + Tested Environment |
-| README structure change | — | — | — | — | — |
+| Physical restore change | — | ✅ Documentation table | — | ✅ Step 1 dir list + Tested Environment | — |
+| Logical restore change | — | ✅ Documentation table | — | — | ✅ Step 1 dir list + Tested Environment |
+| New how-to guide | ✅ add row to §7 table | ✅ add row to Documentation table | — | — | — |
 
 ### Per-document rules
 
@@ -205,18 +212,18 @@ Key `backup_options` fields by type:
 - The credential resolution order or auth mechanism changes
 - The live deployment environment changes (VM names, paths, versions)
 
-**`TESTING.md`** — live test record with real captured output. Update when:
+**`docs/testing.md`** — live test record with real captured output. Update when:
 - Any command's syntax changes (flags, env vars, prefixes)
 - A new test is added or an existing test result changes
 - The pre-test environment state changes (MySQL version, disk, config snapshot)
 
-**`HOWTO-restore.md`** — physical backup restore runbook. Update when:
+**`docs/restore-physical.md`** — physical backup restore runbook. Update when:
 - The backup directory list in Step 1 example output changes
 - The Tested Environment table needs a new date or backup path
 - Any command in the procedure changes
 - A new troubleshooting case is discovered during a restore
 
-**`HOWTO-restore-logical.md`** — logical backup restore from offsite runbook. Update when:
+**`docs/restore-logical.md`** — logical backup restore from offsite runbook. Update when:
 - The offsite backup directory path or timestamp changes
 - myloader version changes (re-test the empty-db edge case)
 - Auth method on the restore target changes (socket vs password)
