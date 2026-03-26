@@ -6,9 +6,9 @@ Python 3 backup suite for MySQL/MariaDB providing:
 - **Physical backups** via `xtrabackup` / `mariadb-backup` — full and incremental, configurable full-backup cycle, AES-256 encryption
 - **Binlog backups** via `mysqlbinlog` — continuous remote streaming with position tracking
 - **Offsite storage** — S3, rsync, GCS, Azure Blob Storage
-- **Retention** — daily + weekly tiers (GASCAN-compliant)
+- **Retention** — configurable daily + weekly tiers
 - **Safety gates** — replica-aware (`replica_only`, `read_only_only`), disk-space checks (2.5× by default)
-- **PXC support** — automatic desync/resync around physical backups on Percona XtraDB Cluster nodes
+- **PXC support** — automatic desync/resync around physical backups on Galera/XtraDB Cluster nodes
 - **Operational** — lock file (prevents concurrent runs), graceful stop, kill long-running queries before backup
 
 > **Documentation:** All guides, runbooks, and test records live in the [`docs/`](docs/) folder.

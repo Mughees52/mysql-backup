@@ -49,7 +49,7 @@ def run_binlog_backup(cfg: BackupConfig, job: JobConfig) -> None:
 
     opts = job.backup_options
 
-    # Disk free percentage guard (similar to GASCAN BINLOG_DISK_FREE_PCT)
+    # Disk free percentage guard
     min_free_pct = float(opts.get("min_free_disk_pct", 5.0))
     if not _check_binlog_disk_free(global_cfg.backup_root, min_free_pct):
         raise RuntimeError(

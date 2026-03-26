@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**mysql-backup** is a Python 3 backup suite for MySQL/MariaDB. It orchestrates logical (mydumper), physical (xtrabackup/mariadb-backup), and binlog (mysqlbinlog) backups with encryption, deduplication, offsite storage, and GASCAN-compliant retention policies.
+**mysql-backup** is a Python 3 backup suite for MySQL/MariaDB. It orchestrates logical (mydumper), physical (xtrabackup/mariadb-backup), and binlog (mysqlbinlog) backups with encryption, deduplication, offsite storage, and configurable daily/weekly retention policies.
 
 The single package namespace is `mysql_backup/`.
 
@@ -175,13 +175,14 @@ All guides and runbooks live in `docs/`:
 | File | Contents |
 |------|----------|
 | `docs/testing.md` | Complete end-to-end test record with real captured output from `mysql-box`. 15 tests: config validation, self-test, list-jobs, precheck, dry-run, logical backup, physical backup (encrypt+decrypt+prepare), binlog backup, retention, lock file, graceful stop, `--run-scheduled` dispatch, rsync offsite upload, logical restore from offsite. |
-| `docs/restore-physical.md` | Full restore procedure for a physical xtrabackup backup onto a separate server. Validated 2026-03-25 on `proxysql` (Ubuntu 22.04, MySQL 8.0.45). Transfer goes mysql-box → Mac host → proxysql (two `multipass transfer` hops). xtrabackup 8.0.35-35 installed via Percona repo. |
+| `docs/restore-physical.md` | Full restore procedure for a physical xtrabackup backup onto a separate server. Validated 2026-03-25 on `proxysql` (Ubuntu 22.04, MySQL 8.0.45). Transfer goes mysql-box → Mac host → proxysql (two `multipass transfer` hops). xtrabackup 8.0.35-35 installed via the xtrabackup apt package. |
 | `docs/restore-logical.md` | Restore procedure for the offsite mydumper backup from `proxysql:/var/backups/mysql-offsite/` using `myloader`. Validated 2026-03-25. myloader 0.10.0 silently skips databases with no table data — apply `<db>-schema-create.sql.gz` manually. Root uses `auth_socket`: use `--socket`, not `--password`. |
 | `docs/setup-encryption.md` | AES-256 encryption setup: key generation, credentials file, job config. |
 | `docs/setup-binlog.md` | Binlog backup setup: enable binary logging, job config, REPLICATION SLAVE grant. |
 | `docs/pitr.md` | Point-in-time recovery using binlogs after a physical restore. |
 | `docs/verify-backup.md` | Verify a physical backup without restoring: `full-prepared` check and `--prepare --export`. |
 | `docs/operations.md` | Upgrade, multiple configs, graceful stop. |
+| `docs/conversationlog.md` | Chronological log of all development sessions: what was built, bugs fixed, decisions made, and current system state. Read this first in any new session to understand the project history. |
 
 ## Documentation Rule
 

@@ -123,7 +123,7 @@ The xtrabackup version on the target must match the version used to take the bac
 (both are 8.0.35-35 in this environment).
 
 ```bash
-# On proxysql — add the Percona repository and install xtrabackup 8.0
+# On proxysql — install xtrabackup 8.0
 sudo wget -q https://repo.percona.com/apt/percona-release_latest.generic_all.deb \
      -O /tmp/percona-release.deb
 

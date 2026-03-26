@@ -29,8 +29,8 @@ def estimate_required_bytes(approx_db_bytes: int, factor: float = 2.5, extra_byt
     """
     Estimate required space as factor * approx_db_bytes + extra_bytes.
 
-    The default factor of 2.5 matches the GASCAN recommendation (backup disk
-    should be at least 2.5x the size of the MySQL data directory).
+    The default factor of 2.5 means backup disk should be at least 2.5x
+    the size of the MySQL data directory.
     """
     return int(approx_db_bytes * factor) + extra_bytes
 

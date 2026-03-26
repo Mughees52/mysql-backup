@@ -44,9 +44,8 @@ def apply_weekly_retention(base: str, instance: str, job_type: str, weeks: int) 
     Keep one backup per calendar week for the most recent `weeks` weeks, removing
     all but the latest backup within each older week outside the daily window.
 
-    This mirrors the GASCAN MYDUMPER_WEEKLY_PURGE approach: daily backups are
-    kept for the standard retention period, and one representative backup per
-    week is preserved for the weekly window beyond that.
+    Daily backups are kept for the standard retention period, and one
+    representative backup per week is preserved for the weekly window beyond that.
     """
     logger = get_logger()
     if weeks <= 0:
